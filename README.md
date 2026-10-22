@@ -23,7 +23,8 @@ evenly across sheets when they do not fit on one.
 
 ```sh
 npx gridity --help             # prebuilt: macOS and Linux (x64, arm64), Windows (x64)
-cargo install gridity          # build from source with Rust
+cargo install gridity          # build from crates.io with Rust
+cargo install --path .         # build this checkout
 ```
 
 Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or

@@ -297,7 +297,8 @@ impl Server {
         Ok(Some(path))
     }
 
-    /// Paths that do not exist pass; gridity then reports them as not found.
+    /// Paths that do not exist pass; gridity then reports them as not found. A directory's
+    /// entries are checked too, since a link inside it may point anywhere.
     fn check_root(&self, path: &Path) -> Result<(), CliError> {
         if self.roots.is_empty() {
             return Ok(());
@@ -305,10 +306,27 @@ impl Server {
         let Ok(path) = std::fs::canonicalize(path) else {
             return Ok(());
         };
-        if self.roots.iter().any(|root| path.starts_with(root)) {
-            return Ok(());
+        if !self.inside_roots(&path) {
+            return Err(self.outside_root(&path));
         }
-        Err(usage(
+        if path.is_dir() {
+            for entry in std::fs::read_dir(&path).into_iter().flatten().flatten() {
+                if let Ok(target) = std::fs::canonicalize(entry.path())
+                    && !self.inside_roots(&target)
+                {
+                    return Err(self.outside_root(&entry.path()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn inside_roots(&self, path: &Path) -> bool {
+        self.roots.iter().any(|root| path.starts_with(root))
+    }
+
+    fn outside_root(&self, path: &Path) -> CliError {
+        usage(
             Reason::OutsideRoot,
             format!(
                 "{} is outside the directories this server may read",
@@ -322,7 +340,7 @@ impl Server {
                 .map(|r| r.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
-        )))
+        ))
     }
 }
 
@@ -591,6 +609,17 @@ mod tests {
             Reason::OutsideRoot
         );
         assert!(server.password_file(Some("-".to_string())).is_err());
+
+        #[cfg(unix)]
+        {
+            let images = dir.path().join("images");
+            std::fs::create_dir(&images).unwrap();
+            std::os::unix::fs::symlink(outside.join("Cargo.toml"), images.join("a.png")).unwrap();
+            assert_eq!(
+                server.check_root(&images).unwrap_err().reason,
+                Reason::OutsideRoot
+            );
+        }
     }
 
     #[test]

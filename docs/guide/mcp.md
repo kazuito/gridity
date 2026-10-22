@@ -17,7 +17,8 @@ Claude Desktop (`claude_desktop_config.json`):
 { "mcpServers": { "gridity": { "command": "gridity", "args": ["mcp"] } } }
 ```
 
-Options: `--root DIR` (repeatable) limits inputs and password files to those directories;
+Options: `--root DIR` (repeatable) limits inputs, the files of an input directory (links
+included) and password files to those directories;
 `--jobs N` sets the number of workers. Video needs `ffmpeg` on the server's `PATH` (or
 `GRIDITY_FFMPEG` in its environment).
 

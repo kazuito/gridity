@@ -17,19 +17,25 @@ Windows (x64), and a small Node launcher that runs the one for the current platf
 Both registries use trusted publishing (no stored tokens), which can only be configured for
 a package that already exists, so the first version is published by hand:
 
-1. crates.io: `cargo login`, then `cargo publish`. On crates.io, open the crate's settings,
-   add a trusted publisher for repository `kazuito/gridity`, workflow `release.yml`,
-   environment `release`.
-2. npm: build the package locally with the binaries you have
-   (`node packaging/npm/build.mjs <bins> npm-package`, see the script header), or wait for
-   a release run's `bin-*` artifacts, then `npm publish --access public` from
-   `npm-package/`. On npmjs.com, open the package's settings and add a trusted publisher
-   for GitHub Actions: repository `kazuito/gridity`, workflow `release.yml`, environment
-   `release`.
-3. In the GitHub repository settings, create the `release` environment (optionally with
+1. In the GitHub repository settings, create the `release` environment (optionally with
    required reviewers).
+2. Push the first tag (`v0.1.0`). Its `build` job produces the five `bin-*` artifacts; its
+   `crates` and `npm` jobs fail because no trusted publisher exists yet. That is expected.
+3. crates.io: `cargo login`, then `cargo publish` from the tagged commit. In the crate's
+   settings on crates.io, add a trusted publisher: repository `kazuito/gridity`, workflow
+   `release.yml`, environment `release`.
+4. npm: download all `bin-*` artifacts of that run into one directory (`gh run download
+   <run-id> -p 'bin-*' -D bins`), then `node packaging/npm/build.mjs --all bins npm-package`
+   and `npm publish --access public` from `npm-package/`. Always use `--all` for anything
+   you publish: a version published without every platform cannot be replaced. In the
+   package's settings on npmjs.com, add a trusted publisher for GitHub Actions with the
+   same repository, workflow and environment.
+
+From the next tag on, the workflow publishes both by itself.
 
 ## Checking a package locally
+
+For `npm pack` only; never publish a package built this way (it holds one platform).
 
 ```sh
 cargo publish --dry-run
