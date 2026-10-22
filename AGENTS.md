@@ -21,9 +21,9 @@ input and look at the output image (see "Manual verification").
 
 CI (`.github/workflows/ci.yml`) runs the same checks on Linux, macOS and Windows, plus
 `cargo check` with the MSRV (`rust-version` in `Cargo.toml`), `cargo deny check`
-(advisories, licenses, sources; config in `deny.toml`) and a check that `image`,
-`imageproc` and `ab_glyph` have no duplicate versions. When adding a dependency, run
-`cargo deny check` locally if `cargo-deny` is installed.
+(advisories, licenses, sources; config in `deny.toml`) and a check that `image` has no
+duplicate versions. When adding a dependency, run `cargo deny check` locally if
+`cargo-deny` is installed.
 
 ## Layout
 
@@ -140,8 +140,9 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   with a concrete next step (a flag to pass, or `see: gridity guide <topic>`).
 - Keep `layout.rs` and `select.rs` pure (no I/O) and unit-tested.
 - `hayro` is pinned (`=0.8.0`). Upgrade deliberately and re-check the PDF fixtures.
-- `image`, `imageproc` and `ab_glyph` must stay a compatible set (`cargo tree -d` should
-  not show duplicates of them).
+- `image` must stay one version shared with `hayro` (`cargo tree -d` should not show it).
+- Every dependency adds to `cargo install` time. Prefer a few lines of our own code over a
+  crate for a small helper (cell frames are drawn in `compose.rs` for this reason).
 
 ## Making changes
 

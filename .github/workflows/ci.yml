@@ -91,7 +91,7 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
 
   duplicates:
-    name: image/imageproc/ab_glyph stay one compatible set
+    name: image stays one version shared with hayro
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,7 +99,7 @@ jobs:
         with:
           toolchain: stable
       - run: |
-          if cargo tree -d -e normal --locked | grep -E '^(image|imageproc|ab_glyph) v'; then
-            echo "::error::duplicate versions of image, imageproc or ab_glyph (see AGENTS.md)"
+          if cargo tree -d -e normal --locked | grep -E '^image v'; then
+            echo "::error::duplicate versions of image (see AGENTS.md)"
             exit 1
           fi

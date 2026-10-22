@@ -1,6 +1,4 @@
 use image::{Rgba, RgbaImage, imageops};
-use imageproc::drawing::draw_hollow_rect_mut;
-use imageproc::rect::Rect;
 
 use crate::cli::LabelPos;
 use crate::color::is_dark;
@@ -154,11 +152,7 @@ pub fn compose(
             style.label_pos,
         );
 
-        draw_hollow_rect_mut(
-            &mut canvas,
-            Rect::at(x as i32 - 1, y as i32 - 1).of_size(w + 2, h + 2),
-            style.border,
-        );
+        draw_frame(&mut canvas, [x, y, w, h], style.border);
         imageops::overlay(&mut canvas, &cell.image, x as i64, y as i64);
         rects.push([x, y, w, h]);
 
@@ -250,6 +244,26 @@ fn draw_label_overlay(
     );
 }
 
+/// Sets a 1 px frame just outside `rect`, clipped to the canvas.
+fn draw_frame(canvas: &mut RgbaImage, rect: CellRect, color: Rgba<u8>) {
+    let [x, y, w, h] = rect.map(i64::from);
+    let (width, height) = (i64::from(canvas.width()), i64::from(canvas.height()));
+    let (left, top, right, bottom) = (x - 1, y - 1, x + w, y + h);
+    let mut put = |px: i64, py: i64| {
+        if (0..width).contains(&px) && (0..height).contains(&py) {
+            canvas.put_pixel(px as u32, py as u32, color);
+        }
+    };
+    for px in left..=right {
+        put(px, top);
+        put(px, bottom);
+    }
+    for py in top..=bottom {
+        put(left, py);
+        put(right, py);
+    }
+}
+
 /// Alpha-blends a solid rectangle onto the canvas.
 fn fill_rect(canvas: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color: Rgba<u8>) {
     let alpha = color[3] as f32 / 255.0;
@@ -290,6 +304,32 @@ mod tests {
             details: "p.1–4 of 42".to_string(),
         };
         assert_eq!(header_line(&font, &short, 520), "deck.pdf · p.1–4 of 42");
+    }
+
+    #[test]
+    fn frame_surrounds_rect_and_clips_at_edges() {
+        let bg = Rgba([0, 0, 0, 255]);
+        let border = Rgba([255, 0, 0, 255]);
+        let mut canvas = RgbaImage::from_pixel(8, 6, bg);
+        draw_frame(&mut canvas, [2, 2, 3, 2], border);
+        let framed: Vec<(u32, u32)> = canvas
+            .enumerate_pixels()
+            .filter(|(_, _, p)| **p == border)
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        let expected: Vec<(u32, u32)> = (1..=4)
+            .flat_map(|y| (1..=5).map(move |x| (x, y)))
+            .filter(|&(x, y)| x == 1 || x == 5 || y == 1 || y == 4)
+            .collect();
+        assert_eq!(framed, expected);
+
+        let mut corner = RgbaImage::from_pixel(4, 4, bg);
+        draw_frame(&mut corner, [0, 0, 4, 4], border);
+        assert!(corner.pixels().all(|p| *p == bg));
+        draw_frame(&mut corner, [0, 0, 2, 2], border);
+        assert_eq!(*corner.get_pixel(2, 2), border);
+        assert_eq!(*corner.get_pixel(0, 2), border);
+        assert_eq!(*corner.get_pixel(1, 1), bg);
     }
 
     #[test]
