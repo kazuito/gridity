@@ -132,7 +132,7 @@ const MAX_TEXT_CHARS: usize = 400_000;
 #[serde(deny_unknown_fields)]
 struct GuideParams {
     /// Guide topic (default index), or all for every topic.
-    #[schemars(extend("enum" = crate::guide::topic_names()))]
+    #[schemars(extend("type" = "string", "enum" = crate::guide::topic_names()))]
     topic: Option<String>,
 }
 
@@ -715,7 +715,8 @@ fn tools() -> Vec<Value> {
         large_text(tool(
             "probe",
             "Page count, duration, resolution and sheet estimates for an input; with per_page, \
-             which PDF pages need to be seen as images. Returns suggested render commands.",
+             which PDF pages need to be seen as images. Returns suggested_calls: tool calls to \
+             make as given.",
             schema_for!(ProbeParams),
             Some(schema_for!(ProbeReport)),
             read_only.clone(),
