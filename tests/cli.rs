@@ -1297,6 +1297,7 @@ fn long_pdfs_keep_every_page_in_order() {
     assert_eq!(probe["pages"].as_array().unwrap().len(), 300);
 
     let manifest = run_json(&["render", s(&pdf), "--pages", "120,7,299", "--dry-run"]);
+    assert_eq!(manifest["limits"]["rule"], "claude-28px-patch");
     let cells: Vec<&Value> = manifest["sheets"][0]["cells"]
         .as_array()
         .unwrap()

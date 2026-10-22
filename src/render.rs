@@ -293,7 +293,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
             path: path.map(|p| p.display().to_string()),
             width,
             height,
-            est_tokens: token_cost(width, height),
+            est_tokens: token_cost(width, height, layout.limits.rule),
             bytes,
             grid: sheet.grid,
             cells: sheet_items
@@ -328,6 +328,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
         source: source_info(&source, false),
         limits: LimitsInfo {
             preset: preset_name(args.layout.preset).to_string(),
+            rule: layout.limits.rule.name().to_string(),
             max_edge: layout.limits.max_edge,
             max_tokens: layout.limits.max_tokens,
         },

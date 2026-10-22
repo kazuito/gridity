@@ -191,10 +191,15 @@
         },
         "preset": {
           "type": "string"
+        },
+        "rule": {
+          "description": "How sizes and tokens are counted, e.g. claude-28px-patch.",
+          "type": "string"
         }
       },
       "required": [
         "preset",
+        "rule",
         "max_edge",
         "max_tokens"
       ]
@@ -251,7 +256,7 @@
           }
         },
         "est_tokens": {
-          "description": "Visual tokens under Claude's 28x28 px patch rule; other models count differently.",
+          "description": "Visual tokens under the preset's rule (`limits.rule`).",
           "type": "integer",
           "format": "uint32",
           "minimum": 0

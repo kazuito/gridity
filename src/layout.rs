@@ -9,20 +9,40 @@ const PATCH: u32 = 28;
 /// Largest value `--max-sheets` accepts.
 pub const MAX_SHEETS: usize = 1000;
 
+/// How a model decides whether to downscale an image and how it counts the image's tokens.
+/// Every preset names one rule; see AGENTS.md "Adding a preset" before adding another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageRule {
+    /// Claude: both edges are rounded up to whole 28x28 px patches; one patch is one token.
+    ClaudePatch,
+}
+
+impl ImageRule {
+    pub fn name(self) -> &'static str {
+        match self {
+            ImageRule::ClaudePatch => "claude-28px-patch",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
+    pub rule: ImageRule,
     pub max_edge: u32,
     pub max_tokens: u32,
 }
 
 impl Limits {
+    // Claude values from https://platform.claude.com/docs/en/build-with-claude/vision (checked 2026-10-22).
     pub fn new(preset: Preset, max_edge: Option<u32>, max_tokens: Option<u32>) -> Limits {
         let base = match preset {
             Preset::Compat => Limits {
+                rule: ImageRule::ClaudePatch,
                 max_edge: 1568,
                 max_tokens: 1568,
             },
             Preset::Hires => Limits {
+                rule: ImageRule::ClaudePatch,
                 max_edge: 2576,
                 max_tokens: 4784,
             },
@@ -30,19 +50,26 @@ impl Limits {
         Limits {
             max_edge: max_edge.unwrap_or(base.max_edge),
             max_tokens: max_tokens.unwrap_or(base.max_tokens),
+            ..base
         }
     }
 }
 
-pub fn token_cost(width: u32, height: u32) -> u32 {
-    width.div_ceil(PATCH) * height.div_ceil(PATCH)
+pub fn token_cost(width: u32, height: u32, rule: ImageRule) -> u32 {
+    match rule {
+        ImageRule::ClaudePatch => width.div_ceil(PATCH) * height.div_ceil(PATCH),
+    }
 }
 
-/// Same check Claude uses to decide whether an image must be downscaled.
+/// Same check the model uses to decide whether an image must be downscaled.
 pub fn fits(width: u32, height: u32, limits: Limits) -> bool {
-    width.div_ceil(PATCH) * PATCH <= limits.max_edge
-        && height.div_ceil(PATCH) * PATCH <= limits.max_edge
-        && token_cost(width, height) <= limits.max_tokens
+    match limits.rule {
+        ImageRule::ClaudePatch => {
+            width.div_ceil(PATCH) * PATCH <= limits.max_edge
+                && height.div_ceil(PATCH) * PATCH <= limits.max_edge
+                && token_cost(width, height, limits.rule) <= limits.max_tokens
+        }
+    }
 }
 
 /// Fixed space around the cells: outer padding, gaps, header band and the label strip under each cell.
@@ -314,6 +341,7 @@ mod tests {
     use super::*;
 
     const COMPAT: Limits = Limits {
+        rule: ImageRule::ClaudePatch,
         max_edge: 1568,
         max_tokens: 1568,
     };
@@ -341,18 +369,13 @@ mod tests {
         assert!(!fits(1569, 100, COMPAT));
         assert!(!fits(1568, 812, COMPAT));
         assert!(fits(1092, 1092, COMPAT));
-        assert_eq!(token_cost(1092, 1092), 1521);
+        assert_eq!(token_cost(1092, 1092, ImageRule::ClaudePatch), 1521);
     }
 
     #[test]
     fn grids_never_exceed_limits() {
-        for limits in [
-            COMPAT,
-            Limits {
-                max_edge: 2576,
-                max_tokens: 4784,
-            },
-        ] {
+        let presets = <Preset as clap::ValueEnum>::value_variants();
+        for limits in presets.iter().map(|&p| Limits::new(p, None, None)) {
             for aspect in [0.2, 1.0 / 1.414, 1.0, 4.0 / 3.0, 16.0 / 9.0, 5.0] {
                 for n in 1..=40 {
                     let grid = best_grid(n, aspect, limits, CHROME, None, None, None).unwrap();
@@ -427,7 +450,7 @@ mod tests {
     fn huge_max_edge_does_not_overflow() {
         let limits = Limits {
             max_edge: u32::MAX,
-            max_tokens: 1568,
+            ..COMPAT
         };
         let grid = best_grid(4, 1.0, limits, CHROME, None, None, None).unwrap();
         let (w, h) = grid.sheet_size(CHROME);

@@ -14,8 +14,10 @@ every image larger than 2000 px, so use `compat` for such requests; `hires` shee
 2000 px get a warning. Limits are from
 <https://platform.claude.com/docs/en/build-with-claude/vision> (checked 2026-10-22).
 
-Tokens are counted as `ceil(w/28) * ceil(h/28)`. Override with `--max-edge` (28-8000) and
-`--max-tokens` (1-81225) for other models; Claude rejects images larger than 8000 px.
+Tokens are counted as `ceil(w/28) * ceil(h/28)` (`limits.rule` in the manifest:
+`claude-28px-patch`). Override with `--max-edge` (28-8000) and `--max-tokens` (1-81225)
+to approximate other models' limits; their own token counts differ from `est_tokens`.
+Claude rejects images larger than 8000 px.
 
 ## Items per sheet
 

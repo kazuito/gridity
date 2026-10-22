@@ -328,6 +328,8 @@ pub struct ErrorInfo {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct LimitsInfo {
     pub preset: String,
+    /// How sizes and tokens are counted, e.g. claude-28px-patch.
+    pub rule: String,
     pub max_edge: u32,
     pub max_tokens: u32,
 }
@@ -338,7 +340,7 @@ pub struct SheetInfo {
     pub path: Option<String>,
     pub width: u32,
     pub height: u32,
-    /// Visual tokens under Claude's 28x28 px patch rule; other models count differently.
+    /// Visual tokens under the preset's rule (`limits.rule`).
     pub est_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<usize>,

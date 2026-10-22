@@ -80,9 +80,10 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 ## Invariants (do not break)
 
 - **Sheets never exceed `Limits`.** Every sheet satisfies `layout::fits()`, which mirrors
-  Claude's resize rule: each edge rounded up to 28 px ≤ `max_edge`, and
-  `ceil(w/28) * ceil(h/28)` ≤ `max_tokens`. Presets: `compat` 1568/1568, `hires`
-  2576/4784. The test `grids_never_exceed_limits` guards this.
+  the model's resize rule (`Limits::rule`). For `ImageRule::ClaudePatch`: each edge rounded
+  up to 28 px ≤ `max_edge`, and `ceil(w/28) * ceil(h/28)` ≤ `max_tokens`. Presets:
+  `compat` 1568/1568, `hires` 2576/4784. The test `grids_never_exceed_limits` checks
+  every preset.
 - **Dry-run rects equal rendered rects.** Both use `compose::place()`. Never position a
   cell image any other way.
 - **Raster sources are never upscaled.** `fit_size` caps at `Item::native`, and
@@ -159,6 +160,15 @@ position, format, `min_cell`, label variables, and a guide topic.
 Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
 changes with `gridity text` / `gridity probe --per-page` on `samples/inputs/*.pdf` and a
 real slide deck or paper, and keep `docs/guide/text.md` in sync.
+
+**Adding a preset** (e.g. for another provider)
+1. Read the provider's image documentation first; never use remembered numbers. Put the URL
+   and the date you checked it in a comment next to the values (see `Limits::new`).
+2. Add the `Preset` variant in `cli.rs` and its values in `Limits::new`. If the provider
+   resizes or counts tokens differently, add an `ImageRule` variant and handle it in
+   `fits()` and `token_cost()` (with unit tests for its edge cases).
+3. `grids_never_exceed_limits` covers every preset; check `min_cell` (below) still gives
+   sensible counts, and update `docs/guide/layout.md` and `preset_name`.
 
 **Tuning `--detail`**
 `render::min_cell` holds the minimum cell long edge per kind and detail. It is calibrated

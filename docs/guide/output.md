@@ -32,7 +32,7 @@ and no files.
 {
   "schema_version": 1,
   "source": { "kind": "pdf", "path": "/abs/deck.pdf", "pages": 42 },
-  "limits": { "preset": "compat", "max_edge": 1568, "max_tokens": 1568 },
+  "limits": { "preset": "compat", "rule": "claude-28px-patch", "max_edge": 1568, "max_tokens": 1568 },
   "sheets": [
     {
       "path": "/abs/tmp/gridity-501/deck-1a2b3c4d5e6f7a8b/deck.grid-01.png",
@@ -57,7 +57,8 @@ and no files.
 - `crop` (only with `--crop`) is the shown region as `[x, y, width, height]` fractions.
 - `error` (only when an item could not be decoded) explains why the cell is a gray
   placeholder; the cell keeps its planned `rect`.
-- `est_tokens` uses Claude's 28x28 px patch rule; other models count differently.
+- `limits.rule` names how sizes and tokens are counted; `claude-28px-patch` is the only
+  rule so far. `est_tokens` follows it; other models count differently.
 - `--dry-run --json` prints the same structure without `path` and `bytes`.
 
 ## Versions and schemas
