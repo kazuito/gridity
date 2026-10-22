@@ -31,7 +31,8 @@ const MAX_RESULT_BASE64_BYTES: usize = 20_000_000;
 
 const INSTRUCTIONS: &str = "gridity arranges PDF pages, video frames, GIF/APNG frames and \
 images into labeled grid sheets sized for Claude's vision limits. Typical flow: probe the \
-input, read PDF text pages with `text`, then `render` only what needs to be seen. Call \
+input (its suggested_calls are ready-made tool calls), read PDF text pages with `text` (long \
+documents come in parts: follow next_pages), then `render` only what needs to be seen. Call \
 `guide` for options and recipes.";
 
 #[derive(Deserialize, JsonSchema)]
