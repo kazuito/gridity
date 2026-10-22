@@ -278,15 +278,20 @@ impl Server {
             unreachable!("argv starts with render")
         };
         let manifest = crate::render::execute(*args)?.manifest;
-        let images = if p.images.unwrap_or(true) {
-            sheet_images(&manifest)?
+        let total = manifest.sheets.len();
+        let (images, attached) = if p.images.unwrap_or(true) {
+            let images = sheet_images(&manifest)?;
+            let attached = images.len();
+            (images, attached)
         } else {
-            Vec::new()
+            (Vec::new(), total)
         };
-        let summary = format!(
-            "{} sheet(s); cell rects are [x, y, width, height] in sheet pixels.",
-            manifest.sheets.len()
-        );
+        let mut summary = format!("{total} sheet(s); ");
+        if attached < total {
+            summary.push_str(&partial_summary(attached, total));
+            summary.push(' ');
+        }
+        summary.push_str("cell rects are [x, y, width, height] in sheet pixels.");
         Ok(success(&manifest, &summary, images))
     }
 
@@ -485,28 +490,17 @@ fn guide(p: GuideParams) -> Result<Value> {
     Ok(json!({ "content": [{ "type": "text", "text": text }], "isError": false }))
 }
 
-/// Every sheet as an image block, unless together they are too large for one result.
+/// The first sheets as image blocks, as many as fit in one result; the rest stay files.
 fn sheet_images(manifest: &Manifest) -> Result<Vec<Value>> {
-    let total: usize = manifest
+    let sizes: Vec<usize> = manifest
         .sheets
         .iter()
         .map(|s| base64_len(s.bytes.unwrap_or(0)))
-        .sum();
-    if total > MAX_RESULT_BASE64_BYTES {
-        return Err(usage(
-            Reason::TooLarge,
-            format!(
-                "the sheets are {:.1} MB as base64, more than the {} MB one result may carry",
-                total as f64 / 1e6,
-                MAX_RESULT_BASE64_BYTES / 1_000_000
-            ),
-        )
-        .with_hint("render fewer pages or frames, or pass images: false and read the files")
-        .into());
-    }
+        .collect();
+    let count = attachable(&sizes, MAX_RESULT_BASE64_BYTES);
     let engine = base64::engine::general_purpose::STANDARD;
     let mut images = Vec::new();
-    for sheet in &manifest.sheets {
+    for sheet in &manifest.sheets[..count] {
         let Some(path) = &sheet.path else { continue };
         let mime = match format_from_extension(Path::new(path)) {
             Some(Format::Jpeg) => "image/jpeg",
@@ -516,6 +510,47 @@ fn sheet_images(manifest: &Manifest) -> Result<Vec<Value>> {
         images.push(json!({ "type": "image", "data": engine.encode(data), "mimeType": mime }));
     }
     Ok(images)
+}
+
+/// How many sheets, from the first, fit together within `budget` base64 bytes.
+fn attachable(base64_sizes: &[usize], budget: usize) -> usize {
+    let mut used = 0;
+    base64_sizes
+        .iter()
+        .take_while(|&&size| {
+            used += size;
+            used <= budget
+        })
+        .count()
+}
+
+/// Which sheets a result leaves out because of `MAX_RESULT_BASE64_BYTES`, and how to see them.
+fn partial_summary(attached: usize, total: usize) -> String {
+    let sheets = |first: usize, last: usize| {
+        if first == last {
+            format!("sheet {first}")
+        } else {
+            format!("sheets {first}-{last}")
+        }
+    };
+    let limit = format!(
+        "one result carries at most {} MB of images (base64)",
+        MAX_RESULT_BASE64_BYTES / 1_000_000
+    );
+    let missing = sheets(attached + 1, total);
+    if attached == 0 {
+        return format!(
+            "no sheet is attached: sheet 1 alone is larger than {limit}. The paths of \
+             {missing} are in the manifest at sheets[i].path: read those files, or render \
+             smaller sheets with format jpeg or preset compat."
+        );
+    }
+    format!(
+        "{} attached as images; {missing} not, since {limit}. Their paths are in the \
+         manifest at sheets[i].path: read those files, or render the rest in another call \
+         with pages (or start/end) narrowed to their cells.",
+        sheets(1, attached)
+    )
 }
 
 /// A successful tool result: a summary line with the JSON document as text (clients that drop
@@ -814,5 +849,30 @@ mod tests {
             message.contains("max_chars within 1000-400000"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn attaches_the_sheets_that_fit() {
+        assert_eq!(attachable(&[], 10), 0);
+        assert_eq!(attachable(&[3, 3, 3], 10), 3);
+        assert_eq!(attachable(&[4, 6, 1], 10), 2);
+        assert_eq!(attachable(&[4, 7, 1], 10), 1);
+        assert_eq!(attachable(&[11, 1], 10), 0);
+    }
+
+    #[test]
+    fn summary_names_the_sheets_left_out() {
+        let partial = partial_summary(13, 64);
+        assert!(partial.contains("sheets 1-13 attached"), "{partial}");
+        assert!(partial.contains("sheets 14-64 not"), "{partial}");
+        assert!(partial.contains("sheets[i].path"), "{partial}");
+        let last = partial_summary(1, 2);
+        assert!(
+            last.contains("sheet 1 attached") && last.contains("sheet 2 not"),
+            "{last}"
+        );
+        let none = partial_summary(0, 2);
+        assert!(none.contains("no sheet is attached"), "{none}");
+        assert!(none.contains("sheets 1-2 are in the manifest"), "{none}");
     }
 }
