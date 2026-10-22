@@ -1503,3 +1503,49 @@ fn characters_without_a_font_are_reported_once() {
     );
     assert!(!warning.contains('日'));
 }
+
+#[test]
+fn ffmpeg_playlists_are_refused() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let segment = dir.path().join("segment.ts");
+    let status = StdCommand::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc=duration=2:size=160x90:rate=25")
+        .args(["-c:v", "mpeg2video", "-f", "mpegts"])
+        .arg(&segment)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let probe = run_json(&["probe", s(&segment)]);
+    assert_eq!(probe["source"]["kind"], "video");
+
+    let lists = dir.path().join("lists");
+    std::fs::create_dir(&lists).unwrap();
+    let hls = lists.join("d.m3u8");
+    std::fs::write(
+        &hls,
+        "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\n../segment.ts\n#EXT-X-ENDLIST\n",
+    )
+    .unwrap();
+    let concat = dir.path().join("d.ffconcat");
+    std::fs::write(&concat, "ffconcat version 1.0\nfile segment.ts\n").unwrap();
+    for list in [&hls, &concat] {
+        let output = gridity()
+            .args(["render", s(list), "--type", "video", "--dry-run", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(3), "{}", list.display());
+        let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(body["error"]["reason"], "wrong_type");
+        assert!(
+            body["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("playlists")
+        );
+    }
+}

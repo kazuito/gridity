@@ -16,6 +16,11 @@ use crate::select::Crop;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(60);
+/// The only demuxers ffmpeg may use: the containers of `detect::VIDEO_EXTENSIONS` (`mov` also
+/// matches mp4/3gp, `matroska` webm). Playlist and sequence demuxers (hls, concat, image2)
+/// open other files named inside the input, which would get around `mcp --root`; mov's
+/// external references stay off (`enable_drefs` defaults to 0).
+const DEMUXERS: &str = "mov,matroska,avi,asf,flv,mpeg,mpegts,ogg";
 
 pub struct VideoSource {
     pub path: PathBuf,
@@ -43,6 +48,8 @@ impl VideoSource {
                     "-show_streams",
                     "-protocol_whitelist",
                     "file",
+                    "-format_whitelist",
+                    DEMUXERS,
                     "-i",
                 ])
                 .arg(input_url(path)),
@@ -50,6 +57,14 @@ impl VideoSource {
             PROBE_TIMEOUT,
         )?;
         if !output.status.success() {
+            if String::from_utf8_lossy(&output.stderr).contains("Format not on whitelist") {
+                return Err(input(
+                    Reason::WrongType,
+                    format!("{} is not a video container gridity reads", path.display()),
+                )
+                .with_hint("use an MP4, MOV, MKV, WebM, AVI, WMV, FLV, MPEG-PS/TS or Ogg file; playlists, concat lists and raw streams are refused (see: gridity guide video)")
+                .into());
+            }
             return Err(input(
                 Reason::DecodeFailed,
                 format!(
@@ -189,6 +204,8 @@ impl VideoSource {
                     &format!("{t:.3}"),
                     "-protocol_whitelist",
                     "file",
+                    "-format_whitelist",
+                    DEMUXERS,
                     "-i",
                 ])
                 .arg(input_url(&self.path))

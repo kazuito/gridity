@@ -18,7 +18,8 @@ Claude Desktop (`claude_desktop_config.json`):
 ```
 
 Options: `--root DIR` (repeatable) limits inputs, the files of an input directory (links
-included) and password files to those directories;
+included) and password files to those directories (video playlists, which could name other
+files, are never read);
 `--jobs N` sets the number of workers. Video needs `ffmpeg` on the server's `PATH` (or
 `GRIDITY_FFMPEG` in its environment).
 

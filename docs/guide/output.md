@@ -127,7 +127,7 @@ gets:
 | `too_large` | usage | MCP server: the sheets are too large to return in one result |
 | `not_found` | input | the input path does not exist |
 | `unknown_type` | input | the input type cannot be detected (pass `--type`) |
-| `wrong_type` | input | the input is not of the required type (`text` needs a PDF) |
+| `wrong_type` | input | the input is not of the required type (`text` needs a PDF; video needs a container, not a playlist) |
 | `unreadable` | input | a file cannot be read (image header, password file) |
 | `decode_failed` | input | the image or video cannot be decoded |
 | `too_large_to_decode` | input | decoding would need more than 512 MiB |

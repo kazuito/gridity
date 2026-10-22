@@ -10,9 +10,12 @@ build with `--ffmpeg /path/to/ffmpeg` or `GRIDITY_FFMPEG`; ffprobe is looked up 
 it, or via `GRIDITY_FFPROBE`. GIF and APNG are decoded without ffmpeg, using at most
 512 MiB per frame.
 
-The input is passed to ffmpeg as a local file only (`-protocol_whitelist file`), so a
-playlist disguised as a video cannot make ffmpeg read other files or URLs. ffprobe gets
-30 s to read the file and ffmpeg 60 s per frame; a timeout fails the render with exit 3.
+The input is passed to ffmpeg as one local file (`-protocol_whitelist file`) in one of
+these containers (`-format_whitelist`): MP4/MOV/3GP, MKV/WebM, AVI, WMV, FLV, MPEG-PS,
+MPEG-TS/M2TS and Ogg. Playlists (`.m3u8`), concat lists, image sequences and raw streams
+(`.h264`) are refused (exit 3, `wrong_type`), so an input cannot make ffmpeg read other
+files or URLs. ffprobe gets 30 s to read the file and ffmpeg 60 s per frame; a timeout
+fails the render with exit 3.
 
 ## Time syntax
 
