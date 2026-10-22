@@ -1549,3 +1549,23 @@ fn ffmpeg_playlists_are_refused() {
         );
     }
 }
+
+#[test]
+fn mcp_server_survives_bad_lines_and_answers_batches() {
+    let mut stdin = b"\xff\xfe\n".to_vec();
+    stdin.extend(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\r\n\n");
+    stdin.extend(b"[{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}]\n");
+    let output = gridity().arg("mcp").write_stdin(stdin).output().unwrap();
+    assert!(output.status.success());
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["error"]["code"], -32700);
+    assert_eq!(responses[0]["id"], Value::Null);
+    assert_eq!(responses[1]["id"], 1);
+    assert_eq!(responses[1]["result"], serde_json::json!({}));
+    assert_eq!(responses[2][0]["id"], 2);
+}

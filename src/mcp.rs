@@ -126,19 +126,23 @@ pub fn run(args: McpArgs) -> Result<()> {
             })
             .collect::<Result<_, _>>()?,
     };
-    let stdin = std::io::stdin();
+    let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if stdin.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        let message = line.trim_ascii();
+        if message.is_empty() {
             continue;
         }
-        if let Some(response) = server.handle_line(&line) {
+        if let Some(response) = server.handle_bytes(message) {
             writeln!(stdout, "{response}")?;
             stdout.flush()?;
         }
     }
-    Ok(())
 }
 
 struct Server {
@@ -146,12 +150,47 @@ struct Server {
 }
 
 impl Server {
-    /// The response to one message, or None for notifications.
+    /// A line that is not UTF-8 is answered as a parse error, like any other invalid JSON.
+    fn handle_bytes(&self, line: &[u8]) -> Option<Value> {
+        match std::str::from_utf8(line) {
+            Ok(line) => self.handle_line(line),
+            Err(e) => Some(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
+        }
+    }
+
+    /// The response to one line: a message, or a JSON-RPC batch answered with an array.
+    /// None when the line holds only notifications.
     fn handle_line(&self, line: &str) -> Option<Value> {
         let message: Value = match serde_json::from_str(line) {
             Ok(message) => message,
             Err(e) => return Some(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
         };
+        match message {
+            Value::Array(batch) if batch.is_empty() => Some(rpc_error(
+                Value::Null,
+                -32600,
+                "invalid request: empty batch",
+            )),
+            Value::Array(batch) => {
+                let responses: Vec<Value> = batch
+                    .iter()
+                    .filter_map(|message| self.handle_message(message))
+                    .collect();
+                if responses.is_empty() {
+                    None
+                } else {
+                    Some(Value::Array(responses))
+                }
+            }
+            message => self.handle_message(&message),
+        }
+    }
+
+    /// The response to one message, or None for notifications.
+    fn handle_message(&self, message: &Value) -> Option<Value> {
+        if !message.is_object() {
+            return Some(rpc_error(Value::Null, -32600, "invalid request"));
+        }
         // Notifications carry no id and get no response.
         let id = message.get("id").cloned()?;
         let Some(method) = message["method"].as_str() else {
@@ -433,12 +472,14 @@ fn sheet_images(manifest: &Manifest) -> Result<Vec<Value>> {
 }
 
 /// A successful tool result: a summary line with the JSON document as text (clients that drop
-/// `structuredContent` still show it to the model), then the images.
+/// `structuredContent` still show it to the model), then the images. The text is serialized
+/// from the struct, since a `Value` sorts the keys and `schema_version` would not come first.
 fn success(document: &impl serde::Serialize, summary: &str, images: Vec<Value>) -> Value {
+    let text = serde_json::to_string(document).unwrap_or_default();
     let structured = serde_json::to_value(document).unwrap_or_default();
     let mut content = vec![json!({
         "type": "text",
-        "text": format!("{summary}\n{structured}"),
+        "text": format!("{summary}\n{text}"),
     })];
     content.extend(images);
     json!({ "content": content, "structuredContent": structured, "isError": false })
@@ -630,5 +671,63 @@ mod tests {
         assert_eq!(tools[0]["inputSchema"]["required"], json!(["inputs"]));
         assert_eq!(tools[0]["outputSchema"]["type"], "object");
         assert!(tools[0]["inputSchema"]["properties"]["password"].is_null());
+    }
+
+    #[test]
+    fn batches_answer_every_request() {
+        let s = server();
+        let ping = |id: i64| json!({ "jsonrpc": "2.0", "id": id, "method": "ping" });
+        let notification = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+
+        let responses = s
+            .handle_line(&json!([ping(1), notification, 42, ping(2)]).to_string())
+            .unwrap();
+        let responses = responses.as_array().unwrap();
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[0]["id"], 1);
+        assert_eq!(responses[0]["result"], json!({}));
+        assert_eq!(responses[1]["id"], Value::Null);
+        assert_eq!(responses[1]["error"]["code"], -32600);
+        assert_eq!(responses[2]["id"], 2);
+
+        let single = s.handle_line(&json!([ping(3)]).to_string()).unwrap();
+        assert_eq!(single.as_array().unwrap()[0]["id"], 3);
+        assert!(s.handle_line(&json!([notification]).to_string()).is_none());
+
+        let empty = s.handle_line("[]").unwrap();
+        assert!(empty.is_object());
+        assert_eq!(empty["error"]["code"], -32600);
+        assert_eq!(empty["id"], Value::Null);
+
+        assert_eq!(s.handle_line("[1,").unwrap()["error"]["code"], -32700);
+        assert_eq!(s.handle_line("42").unwrap()["error"]["code"], -32600);
+    }
+
+    #[test]
+    fn lines_that_are_not_utf8_are_parse_errors() {
+        let error = server().handle_bytes(b"\xff\xfe").unwrap();
+        assert_eq!(error["error"]["code"], -32700);
+        assert_eq!(error["id"], Value::Null);
+    }
+
+    #[test]
+    fn result_text_keeps_schema_version_first() {
+        #[derive(serde::Serialize)]
+        struct Document {
+            schema_version: u32,
+            alpha: u32,
+        }
+        let result = success(
+            &Document {
+                schema_version: 1,
+                alpha: 2,
+            },
+            "summary:",
+            Vec::new(),
+        );
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let (_, document) = text.split_once('\n').unwrap();
+        assert_eq!(document, r#"{"schema_version":1,"alpha":2}"#);
+        assert_eq!(result["structuredContent"]["alpha"], 2);
     }
 }
