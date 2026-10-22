@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
 use crate::error::{dependency, input};
+use crate::select::Crop;
 
 pub struct VideoSource {
     pub path: PathBuf,
@@ -118,6 +119,7 @@ impl VideoSource {
                     time: Some(label.clone()),
                     ..LabelVars::default()
                 },
+                crop: None,
             })
             .collect()
     }
@@ -141,7 +143,7 @@ impl VideoSource {
                     if back > 0.0 && t - back < 0.0 {
                         break;
                     }
-                    if let Some(frame) = self.extract_frame((t - back).max(0.0), size)? {
+                    if let Some(frame) = self.extract_frame((t - back).max(0.0), size, item.crop)? {
                         return Ok(frame);
                     }
                 }
@@ -157,7 +159,16 @@ impl VideoSource {
             .collect()
     }
 
-    fn extract_frame(&self, t: f64, size: (u32, u32)) -> Result<Option<RgbaImage>> {
+    fn extract_frame(
+        &self,
+        t: f64,
+        size: (u32, u32),
+        crop: Option<Crop>,
+    ) -> Result<Option<RgbaImage>> {
+        // ffmpeg rotates frames before the filter chain, so the crop applies to the displayed frame.
+        let crop = crop
+            .map(|c| format!("crop=iw*{}:ih*{}:iw*{}:ih*{},", c.width, c.height, c.x, c.y))
+            .unwrap_or_default();
         let output = run_tool(
             Command::new(&self.ffmpeg)
                 .args([
@@ -176,7 +187,7 @@ impl VideoSource {
                     "-an",
                     "-sn",
                     "-vf",
-                    &format!("scale={}:{}:flags=lanczos,setsar=1", size.0, size.1),
+                    &format!("{crop}scale={}:{}:flags=lanczos,setsar=1", size.0, size.1),
                     "-pix_fmt",
                     "rgb24",
                     "-f",

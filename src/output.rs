@@ -196,6 +196,11 @@ pub struct CellInfo {
     pub file: Option<String>,
     /// Placed image on the sheet: [x, y, width, height].
     pub rect: [u32; 4],
+    /// Sheet pixels per PDF point, or displayed / native pixels for raster sources.
+    pub scale: f64,
+    /// Shown region as [x, y, width, height] fractions of the page or frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
 }
 
 #[cfg(test)]

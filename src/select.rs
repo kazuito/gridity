@@ -61,6 +61,61 @@ fn parse_page_number(s: &str, spec: &str) -> Result<usize, CliError> {
     }
 }
 
+/// Part of a page or frame to show, as fractions of its displayed width and height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Crop {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Crop {
+    /// The crop inside an image of `size` pixels: x, y, width, height (at least 1x1).
+    pub fn pixels(&self, (w, h): (u32, u32)) -> (u32, u32, u32, u32) {
+        let edge = |start: f64, len: f64, total: u32| {
+            let a = ((start * total as f64).round() as u32).min(total.saturating_sub(1));
+            let b = (((start + len) * total as f64).round() as u32).clamp(a + 1, total.max(a + 1));
+            (a, b - a)
+        };
+        let (x, width) = edge(self.x, self.width, w);
+        let (y, height) = edge(self.y, self.height, h);
+        (x, y, width, height)
+    }
+}
+
+/// Parses `X,Y,W,H` fractions, e.g. "0,0.5,1,0.5" for the bottom half.
+pub fn parse_crop(spec: &str) -> Result<Crop, CliError> {
+    let bad = |why: &str| {
+        usage(format!("invalid --crop '{spec}': {why}")).with_hint(
+            "--crop takes X,Y,W,H as fractions of the page or frame, e.g. 0,0.5,1,0.5 for the bottom half",
+        )
+    };
+    let values: Vec<f64> = spec
+        .split(',')
+        .map(|v| v.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| bad("expected four numbers"))?;
+    let [x, y, width, height] = values[..] else {
+        return Err(bad("expected four numbers"));
+    };
+    if values.iter().any(|v| !(0.0..=1.0).contains(v)) {
+        return Err(bad("values must be between 0 and 1"));
+    }
+    if width <= 0.0 || height <= 0.0 {
+        return Err(bad("width and height must be greater than 0"));
+    }
+    if x + width > 1.0 + 1e-9 || y + height > 1.0 + 1e-9 {
+        return Err(bad("the region extends past the edge"));
+    }
+    Ok(Crop {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
 /// Parses "90", "90.5", "90s", "500ms", "1m30s", "1h2m", "1:30", "01:02:03.5" into seconds.
 pub fn parse_time(s: &str) -> Result<f64, CliError> {
     let text = s.trim();
@@ -215,6 +270,37 @@ pub fn min_interval(times: &[f64]) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_crop_accepts_fractions_within_the_page() {
+        let crop = parse_crop("0, 0.5, 1, 0.5").unwrap();
+        assert_eq!(crop.pixels((200, 100)), (0, 50, 200, 50));
+        assert_eq!(
+            parse_crop("0.25,0.25,0.5,0.5").unwrap().pixels((3, 3)),
+            (1, 1, 1, 1)
+        );
+        for bad in [
+            "0,0,1",
+            "0,0,1,1,1",
+            "a,0,1,1",
+            "0,0,0,1",
+            "0.5,0,0.6,1",
+            "-0.1,0,1,1",
+        ] {
+            assert!(parse_crop(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn crop_pixels_stay_inside_the_image() {
+        let crop = Crop {
+            x: 0.999,
+            y: 0.0,
+            width: 0.001,
+            height: 1.0,
+        };
+        assert_eq!(crop.pixels((100, 10)), (99, 0, 1, 10));
+    }
 
     #[test]
     fn page_lists() {

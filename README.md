@@ -7,6 +7,7 @@ sized so an LLM can understand many pages or moments from a single image.
 gridity probe report.pdf                          # pages, sizes, sheet estimates
 gridity render report.pdf                         # prints absolute paths of the sheets
 gridity render report.pdf --pages 3-8 --json      # manifest with cell coordinates
+gridity render report.pdf --pages 7 --crop 0,0.5,1,0.5   # close-up of the bottom half
 gridity render talk.mp4 --start 1:00 --end 2:30 --every 10s
 gridity render screenshots/ --cols 3
 gridity guide                                     # documentation for agents

@@ -73,6 +73,7 @@ impl ImagesSource {
                     name: Some(file_name(&file.path)),
                     ..LabelVars::default()
                 },
+                crop: None,
             })
             .collect()
     }
@@ -86,7 +87,11 @@ impl ImagesSource {
                     unreachable!("image items are files")
                 };
                 let (w, h) = fit_size(item.aspect, bounds, item.native);
-                let image = decode_oriented(path)?;
+                let mut image = decode_oriented(path)?;
+                if let Some(crop) = item.crop {
+                    let (x, y, cw, ch) = crop.pixels((image.width(), image.height()));
+                    image = image.crop_imm(x, y, cw, ch);
+                }
                 Ok(image.resize_exact(w, h, FilterType::CatmullRom).to_rgba8())
             })
             .collect()

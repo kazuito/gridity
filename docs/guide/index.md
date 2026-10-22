@@ -17,7 +17,8 @@ limits. Read one sheet instead of taking many screenshots.
 1. `gridity probe report.pdf` — learn the size of the input and the sheet estimates.
 2. `gridity render report.pdf --dry-run` — optional: check the layout and token cost.
 3. `gridity render report.pdf` — read the printed paths with your image viewer tool.
-4. Zoom in where needed: `gridity render report.pdf --pages 7 --detail high`.
+4. Zoom in where needed: `gridity render report.pdf --pages 7 --detail high`, or `--crop`
+   for part of a page.
 
 ## Output contract
 

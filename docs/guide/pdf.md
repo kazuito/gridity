@@ -25,6 +25,8 @@ A page beyond the end is an error (exit 2) that states the page count.
 - PNG output (sharp text).
 - Pages of different sizes or orientations share a grid; each page is fitted inside its cell.
 - Page rotation (`/Rotate`) is applied.
+- `--crop X,Y,W,H` renders only a region of each page, sharp at the cell size (see
+  `gridity guide layout`).
 
 ## Encrypted PDFs
 

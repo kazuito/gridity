@@ -37,6 +37,8 @@ Variables: `{time}`, `{index}`, `{total}`, and `{frame}` for animations.
 
 Frames are laid out at their display size: non-square pixels (SAR) and rotation metadata
 (phone videos) are applied, and frames are never upscaled beyond their native resolution.
+`--crop X,Y,W,H` keeps a region of every frame, in fractions of the displayed frame (see
+`gridity guide layout`).
 
 ## Output
 

@@ -249,6 +249,86 @@ fn rotated_pages_are_landscape() {
 }
 
 #[test]
+fn crop_shows_part_of_each_page_at_matching_size() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0), (595, 842, 90)]);
+    let args = ["render", s(&pdf), "--crop", "0,0.5,1,0.5"];
+
+    let planned = run_json(&[&args[..], &["--dry-run"]].concat());
+    let manifest = run_json(&[&args[..], &["-o", s(&dir.path().join("out"))]].concat());
+    assert_eq!(
+        planned["sheets"][0]["cells"],
+        manifest["sheets"][0]["cells"]
+    );
+    let cells = manifest["sheets"][0]["cells"].as_array().unwrap();
+    assert_eq!(cells[0]["crop"], serde_json::json!([0.0, 0.5, 1.0, 0.5]));
+    let rect = |i: usize| {
+        let r = &cells[i]["rect"];
+        r[2].as_f64().unwrap() / r[3].as_f64().unwrap()
+    };
+    assert!((rect(0) - 595.0 / 421.0).abs() < 0.02, "{}", rect(0));
+    assert!((rect(1) - 842.0 / 297.5).abs() < 0.05, "{}", rect(1));
+    let scale = cells[0]["scale"].as_f64().unwrap();
+    assert!((scale - cells[0]["rect"][2].as_f64().unwrap() / 595.0).abs() < 0.001);
+    let path = manifest["sheets"][0]["path"].as_str().unwrap();
+    let (w, h) = image::image_dimensions(path).unwrap();
+    assert_eq!(
+        (w as u64, h as u64),
+        (
+            manifest["sheets"][0]["width"].as_u64().unwrap(),
+            manifest["sheets"][0]["height"].as_u64().unwrap()
+        )
+    );
+
+    let other = run_json(&["render", s(&pdf), "--crop", "0,0,1,0.5"]);
+    assert_ne!(other["sheets"][0]["path"], manifest["sheets"][0]["path"]);
+}
+
+#[test]
+fn crop_keeps_raster_inputs_at_native_size() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 120, 90, 0);
+    let jpg = dir.path().join("b.jpg");
+    write_exif_jpeg(&jpg, 400, 200, 6);
+
+    let manifest = run_json(&["render", s(&png), "--crop", "0,0,0.5,1", "--dry-run"]);
+    let rect = &manifest["sheets"][0]["cells"][0]["rect"];
+    assert_eq!((rect[2].as_u64(), rect[3].as_u64()), (Some(60), Some(90)));
+
+    let manifest = run_json(&["render", s(&jpg), "--crop", "0,0,1,0.25", "--dry-run"]);
+    let rect = &manifest["sheets"][0]["cells"][0]["rect"];
+    assert_eq!((rect[2].as_u64(), rect[3].as_u64()), (Some(200), Some(100)));
+
+    let gif = dir.path().join("anim.gif");
+    write_gif(&gif, 4, 100);
+    let manifest = run_json(&[
+        "render",
+        s(&gif),
+        "--crop",
+        "0.5,0.5,0.5,0.5",
+        "-o",
+        s(&dir.path().join("gif")),
+    ]);
+    let sheet = &manifest["sheets"][0];
+    assert_eq!(sheet["cells"].as_array().unwrap().len(), 4);
+    assert_eq!(sheet["cells"][0]["rect"][2], 80);
+}
+
+#[test]
+fn invalid_crop_is_a_usage_error() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 40, 30, 0);
+    gridity()
+        .args(["render", s(&png), "--crop", "0.5,0,0.6,1"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("extends past the edge"));
+}
+
+#[test]
 fn page_out_of_range_reports_json_error() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");
@@ -379,6 +459,7 @@ fn small_images_are_not_upscaled() {
         (grid["cell_width"].as_u64(), grid["cell_height"].as_u64()),
         (Some(120), Some(90))
     );
+    assert_eq!(manifest["sheets"][0]["cells"][0]["scale"], 1.0);
 }
 
 #[test]
@@ -454,6 +535,22 @@ fn video_sampling_and_rotation() {
         ),
         (Some(180), Some(320))
     );
+
+    let cropped = run_json(&[
+        "render",
+        s(&rotated),
+        "--count",
+        "2",
+        "--crop",
+        "0,0,1,0.5",
+        "-o",
+        s(&dir.path().join("crop")),
+    ]);
+    let sheet = &cropped["sheets"][0];
+    assert_eq!(sheet["cells"].as_array().unwrap().len(), 2);
+    let rect = &sheet["cells"][0]["rect"];
+    assert_eq!((rect[2].as_u64(), rect[3].as_u64()), (Some(180), Some(160)));
+    assert_eq!(sheet["cells"][0]["scale"], 1.0);
 
     gridity()
         .args(["render", s(&video), "--end", "9"])

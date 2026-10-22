@@ -180,6 +180,11 @@ pub struct SelectionArgs {
     /// Take frames at explicit times: "0:10,1:30,2:00"
     #[arg(long, value_name = "TIMES", help_heading = "Video / animation")]
     pub at: Option<String>,
+
+    /// Show only part of every page, frame or image: X,Y,W,H as fractions of its displayed
+    /// size, e.g. "0,0.5,1,0.5" for the bottom half [default: whole]
+    #[arg(long, value_name = "X,Y,W,H", help_heading = "Selection")]
+    pub crop: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]

@@ -33,6 +33,20 @@ Explicit control:
 
 Items are spread evenly: 10 items at 8 per sheet become 5 + 5, not 8 + 2.
 
+## Scale
+
+Each cell in the manifest has a `scale`: sheet pixels per point for PDF pages, and
+displayed / native size for images, video and animations (`1.0` = full resolution).
+
+## Crop
+
+`--crop X,Y,W,H` shows only a region of every selected page, frame or image, given as
+fractions of its displayed size (after page rotation, EXIF orientation and video
+rotation): `0,0,1,0.5` is the top half, `0.5,0.5,0.5,0.5` the bottom-right quarter. Cells
+take the region's shape, the header shows `crop X,Y,W,H`, and each cell in the manifest
+has `"crop": [X, Y, W, H]`. PDF regions are rendered at the cell size; raster regions keep
+their pixels and are not upscaled.
+
 ## Spacing and colors
 
 - `--gap PX` (8), `--padding PX` (12)

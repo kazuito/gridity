@@ -51,6 +51,12 @@ case_ images inputs/photos
 case_ images-cols3 inputs/photos --cols 3 --label "{index}/{total} {name}"
 case_ images-split inputs/shots --per-sheet 8
 case_ images-no-header inputs/shots --no-header --no-label --detail low
+case_ crop-pdf-rotated inputs/mixed.pdf --pages 3-4 --crop 0,0,0.5,0.5
+case_ crop-pdf-zoom inputs/report.pdf --pages 1 --crop 0.05,0.05,0.9,0.3
+case_ crop-images inputs/photos --crop 0,0,1,0.5
+case_ crop-video-rotated inputs/rotated.mp4 --count 4 --crop 0,0.25,1,0.5
+case_ crop-video-anamorphic inputs/anamorphic.mp4 --count 4 --crop 0,0,0.5,1
+case_ crop-gif inputs/counter.gif --count 4 --crop 0.5,0,0.5,1
 
 {
   echo '<!doctype html><meta charset="utf-8"><title>gridity samples</title>'

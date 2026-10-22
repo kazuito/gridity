@@ -27,7 +27,7 @@ src/
   cli.rs         clap derive definitions (all flags, defaults, help text)
   error.rs       CliError { kind, message, hint } + ErrorKind -> exit code
   detect.rs      input type detection (magic bytes, extensions, APNG acTL check)
-  select.rs      pure parsing: --pages, times, sampling (Count/Every/At), time labels
+  select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
   compose.rs     draws a sheet: header, cells, borders, labels; place() positions images
   text.rs        font loading (embedded BIZ UDGothic) and text drawing
@@ -51,8 +51,8 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 ## Pipeline
 
 `render::run`: `detect` → `check_flags` → `build_layout` → `Source::open` →
-`select_items` (→ `Vec<Item>`) → `layout::plan` (→ `Vec<SheetPlan>`) → per sheet:
-`Source::render` → `compose` → `encode` → write → print paths or manifest.
+`select_items` (→ `Vec<Item>`, cropped by `--crop`) → `layout::plan` (→ `Vec<SheetPlan>`)
+→ per sheet: `Source::render` → `compose` → `encode` → write → print paths or manifest.
 
 Each source turns a selection into `Item`s (aspect ratio, optional native size, key, label
 variables), then renders a batch of items into `RgbaImage`s that fit given boxes.
@@ -67,7 +67,7 @@ variables), then renders a batch of items into `RgbaImage`s that fit given boxes
   cell image any other way.
 - **Raster sources are never upscaled.** `fit_size` caps at `Item::native`, and
   `PlanOptions::max_cell` (from `render::native_bounds`) shrinks cells to the largest
-  native size.
+  native size. With `--crop`, both describe the cropped region.
 - **Output contract.** stdout carries only sheet paths (one absolute path per line), the
   JSON manifest, or the dry-run summary. Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also

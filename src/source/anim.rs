@@ -89,6 +89,7 @@ impl AnimSource {
                     frame: Some(frame + 1),
                     ..LabelVars::default()
                 },
+                crop: None,
             })
             .collect()
     }
@@ -114,12 +115,13 @@ impl AnimSource {
             })?;
             for (slot, _) in wanted.iter().enumerate().filter(|(_, w)| **w == index) {
                 let (w, h) = fit_size(items[slot].aspect, boxes[slot], items[slot].native);
-                images[slot] = Some(imageops::resize(
-                    frame.buffer(),
-                    w,
-                    h,
-                    FilterType::CatmullRom,
-                ));
+                let buffer = frame.buffer();
+                let (x, y, cw, ch) = match items[slot].crop {
+                    Some(crop) => crop.pixels(buffer.dimensions()),
+                    None => (0, 0, buffer.width(), buffer.height()),
+                };
+                let region = imageops::crop_imm(buffer, x, y, cw, ch).to_image();
+                images[slot] = Some(imageops::resize(&region, w, h, FilterType::CatmullRom));
             }
         }
         images

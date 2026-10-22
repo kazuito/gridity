@@ -18,6 +18,24 @@ gridity render paper.pdf --pages 7 --detail high
 gridity render paper.pdf --pages 7 --per-sheet 1 --preset hires   # largest possible
 ```
 
+## Zoom into part of a cell
+
+Find the region in the sheet, then convert it to fractions of the cell's `rect` from the
+manifest:
+
+```
+X = (region_x - rect.x) / rect.width     W = region_width / rect.width
+Y = (region_y - rect.y) / rect.height    H = region_height / rect.height
+```
+
+```sh
+gridity render paper.pdf --pages 7 --crop 0.1,0.55,0.8,0.3        # PDF: re-rendered sharp
+gridity render talk.mp4 --at 12:30 --crop 0.5,0,0.5,0.5            # top-right quarter
+```
+
+PDF crops are rendered at the cell size, so a small region gets many pixels. Raster
+inputs are never upscaled: a crop of a small image stays small.
+
 ## Understand a video
 
 ```sh

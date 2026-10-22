@@ -14,7 +14,9 @@ use crate::output::{
     CellInfo, LimitsInfo, MAX_IMAGE_BYTES, Manifest, SheetInfo, Target, encode,
     format_from_extension,
 };
-use crate::select::{Sampling, format_time, min_interval, parse_pages, parse_time, sample_times};
+use crate::select::{
+    Crop, Sampling, format_time, min_interval, parse_crop, parse_pages, parse_time, sample_times,
+};
 use crate::source::{Item, ItemKey, Source, Warnings, file_name, fit_size};
 use crate::text::load_font;
 
@@ -114,9 +116,16 @@ pub fn run(args: RenderArgs) -> Result<()> {
     let mut layout = build_layout(&args, kind)?;
     let source = Source::open(kind, &args.inputs, &args.source)?;
     log(format!("opened {} input", kind_name(kind)));
-    layout.options.max_cell = native_bounds(&source);
+    let crop = args.selection.crop.as_deref().map(parse_crop).transpose()?;
+    layout.options.max_cell = native_bounds(&source).map(|size| match crop {
+        Some(crop) => {
+            let (_, _, w, h) = crop.pixels(size);
+            (w, h)
+        }
+        None => size,
+    });
 
-    let items = select_items(&source, &args.selection, &layout)?;
+    let items = select_items(&source, &args.selection, crop, &layout)?;
     let aspect = median_aspect(&items);
     let sheets = plan(
         items.len(),
@@ -227,7 +236,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
                 .iter()
                 .zip(labels)
                 .zip(rects)
-                .map(|((item, label), rect)| cell_info(item, label, rect))
+                .map(|((item, label), rect)| {
+                    cell_info(item, label, rect, natural_width(&source, item))
+                })
                 .collect(),
         });
     }
@@ -409,11 +420,29 @@ fn expand_label(template: &str, item: &Item) -> String {
         .replace("{name}", &opt(v.name.clone()))
 }
 
-/// Resolves the user's selection into the items to place, in order.
-fn select_items(source: &Source, sel: &SelectionArgs, layout: &Layout) -> Result<Vec<Item>> {
+/// Resolves the user's selection into the items to place, in order, cropped if asked.
+fn select_items(
+    source: &Source,
+    sel: &SelectionArgs,
+    crop: Option<Crop>,
+    layout: &Layout,
+) -> Result<Vec<Item>> {
+    let mut items = select_uncropped(source, sel, crop, layout)?;
+    if let Some(crop) = crop {
+        apply_crop(&mut items, crop);
+    }
+    Ok(items)
+}
+
+fn select_uncropped(
+    source: &Source,
+    sel: &SelectionArgs,
+    crop: Option<Crop>,
+    layout: &Layout,
+) -> Result<Vec<Item>> {
     let one_sheet = |aspect: f64| {
         capacity(
-            aspect,
+            aspect * crop.map_or(1.0, |c| c.width / c.height),
             layout.limits,
             layout.chrome,
             &layout.options,
@@ -448,6 +477,21 @@ fn select_items(source: &Source, sel: &SelectionArgs, layout: &Layout) -> Result
             let labels = time_labels(&starts, anim.duration >= 3600.0);
             Ok(anim.items(&frames, &labels))
         }
+    }
+}
+
+/// Narrows every item to the cropped region; raster sizes are rounded to whole pixels.
+fn apply_crop(items: &mut [Item], crop: Crop) {
+    for item in items {
+        match item.native {
+            Some(size) => {
+                let (_, _, w, h) = crop.pixels(size);
+                item.native = Some((w, h));
+                item.aspect = w as f64 / h as f64;
+            }
+            None => item.aspect *= crop.width / crop.height,
+        }
+        item.crop = Some(crop);
     }
 }
 
@@ -542,7 +586,17 @@ fn predicted_rects(sheet: &SheetPlan, items: &[Item], layout: &Layout) -> Vec<[u
         .collect()
 }
 
-fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4]) -> CellInfo {
+/// Width of an item before scaling: points for PDF pages, pixels for raster sources.
+pub fn natural_width(source: &Source, item: &Item) -> f64 {
+    match (source, &item.key) {
+        (Source::Pdf(pdf), ItemKey::Page(index)) => {
+            pdf.page_sizes[*index].0 as f64 * item.crop.map_or(1.0, |c| c.width)
+        }
+        _ => item.native.map_or(1.0, |(w, _)| w as f64),
+    }
+}
+
+fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4], natural_width: f64) -> CellInfo {
     let (page, time, frame, file) = match &item.key {
         ItemKey::Page(index) => (Some(index + 1), None, None, None),
         ItemKey::Time(t) => (None, Some(round3(*t)), None, None),
@@ -557,6 +611,8 @@ fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4]) -> CellInfo {
         frame,
         file,
         rect,
+        scale: round3(rect[2] as f64 / natural_width),
+        crop: item.crop.map(|c| [c.x, c.y, c.width, c.height]),
     }
 }
 
@@ -629,7 +685,16 @@ fn header_text(
             ),
         ),
     };
-    [Some(name), Some(scope), sheet_part]
+    let crop_part = first.crop.map(|c| {
+        format!(
+            "crop {},{},{},{}",
+            round3(c.x),
+            round3(c.y),
+            round3(c.width),
+            round3(c.height)
+        )
+    });
+    [Some(name), Some(scope), crop_part, sheet_part]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -834,6 +899,7 @@ mod tests {
                 page: Some(5),
                 ..LabelVars::default()
             },
+            crop: None,
         };
         assert_eq!(expand_label("p.{page} {index}/{total}", &item), "p.5 2/9");
     }

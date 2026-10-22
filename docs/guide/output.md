@@ -32,7 +32,7 @@ and no files.
       "width": 896, "height": 1319, "est_tokens": 1536, "bytes": 68967,
       "grid": { "cols": 2, "rows": 2, "cell_width": 432, "cell_height": 611 },
       "cells": [
-        { "index": 1, "label": "p.1", "page": 1, "rect": [12, 35, 432, 611] }
+        { "index": 1, "label": "p.1", "page": 1, "rect": [12, 35, 432, 611], "scale": 0.726 }
       ]
     }
   ],
@@ -45,6 +45,9 @@ and no files.
 - Cells carry `page` (PDF), `time` in seconds (video, animation), `frame` (animation, 1-based)
   or `file` (images). `index` is 1-based across the whole render.
 - `rect` is `[x, y, width, height]` of the placed image in sheet pixels.
+- `scale` is sheet pixels per point for PDF pages, and displayed / native pixels for
+  images and frames.
+- `crop` (only with `--crop`) is the shown region as `[x, y, width, height]` fractions.
 - `est_tokens` uses Claude's 28x28 px patch rule; other models count differently.
 - `--dry-run --json` prints the same structure without `path` and `bytes`.
 

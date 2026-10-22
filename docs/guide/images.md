@@ -12,6 +12,7 @@ gridity render screenshots/            # every image in the directory (not recur
 - EXIF orientation is applied, so phone photos are upright.
 - Images are never upscaled; cells shrink to the largest input instead of adding empty
   space.
+- `--crop X,Y,W,H` keeps the same region of every image, in fractions of its upright size.
 
 ## Labels
 
@@ -21,4 +22,5 @@ Default `{name}` (file name) below each image. Variables: `{name}`, `{index}`, `
 gridity render shots/ --label "{index}/{total} {name}"
 ```
 
-Selection options (`--pages`, `--start`, `--every`, ...) are rejected for images.
+Selection options (`--pages`, `--start`, `--every`, ...) are rejected for images;
+`--crop` works for every input type.

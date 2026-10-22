@@ -2,16 +2,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning};
+use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning, TransformExt};
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
+use hayro::kurbo::Affine;
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::peniko::ImageAlphaType;
-use hayro::{PixmapSettings, RenderCache, RenderSettings};
+use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
+use hayro::{RenderCache, RenderSettings};
 use image::RgbaImage;
 use rayon::prelude::*;
 
 use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
 use crate::error::{CliError, input};
+use crate::select::Crop;
 
 pub struct PdfSource {
     pub path: PathBuf,
@@ -73,6 +76,7 @@ impl PdfSource {
                         page: Some(page),
                         ..LabelVars::default()
                     },
+                    crop: None,
                 }
             })
             .collect()
@@ -92,7 +96,8 @@ impl PdfSource {
                     unreachable!("PDF items are pages")
                 };
                 let size = fit_size(item.aspect, bounds, None);
-                let (image, page_warnings) = render_page(&self.data, &self.password, index, size)?;
+                let (image, page_warnings) =
+                    render_page(&self.data, &self.password, index, size, item.crop)?;
                 for warning in page_warnings {
                     warnings.push(format!("page {}: {}", index + 1, describe_warning(warning)));
                 }
@@ -115,16 +120,31 @@ fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
     })
 }
 
-/// Renders one page so it is exactly `size` pixels; hayro's borrowed types stay inside this function.
+/// Renders one page, or its `crop` region, so it is exactly `size` pixels. Only the region is
+/// rasterized, so small crops stay cheap. hayro's borrowed types stay inside this function.
 fn render_page(
     data: &Arc<Vec<u8>>,
     password: &str,
     index: usize,
     size: (u32, u32),
+    crop: Option<Crop>,
 ) -> Result<(RgbaImage, Vec<InterpreterWarning>)> {
     let pdf = load(data, password)?;
     let page = &pdf.pages()[index];
     let (page_w, page_h) = page.render_dimensions();
+    let crop = crop.unwrap_or(Crop {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    });
+    let scale_x = size.0 as f64 / (page_w as f64 * crop.width);
+    let scale_y = size.1 as f64 / (page_h as f64 * crop.height);
+    let transform = Affine::translate((
+        -crop.x * page_w as f64 * scale_x,
+        -crop.y * page_h as f64 * scale_y,
+    )) * Affine::scale_non_uniform(scale_x, scale_y)
+        * page.initial_transform(true).to_kurbo();
 
     let collected = Arc::new(Mutex::new(Vec::new()));
     let sink = collected.clone();
@@ -132,20 +152,31 @@ fn render_page(
         warning_sink: Arc::new(move |warning| sink.lock().unwrap().push(warning)),
         ..InterpreterSettings::default()
     };
-    let pixmap = hayro::render(
+    let (width, height) = (
+        u16::try_from(size.0).context("page image is too wide")?,
+        u16::try_from(size.1).context("page image is too tall")?,
+    );
+    let mut ctx = RenderContext::new(width, height);
+    hayro::render_into(
         page,
         &RenderCache::new(),
         &settings,
         &RenderSettings::default(),
-        &PixmapSettings {
-            x_scale: size.0 as f32 / page_w,
-            y_scale: size.1 as f32 / page_h,
-            bg_color: WHITE,
+        &mut ctx,
+        transform,
+    );
+    ctx.flush();
+    let mut pixmap = Pixmap::new(width, height);
+    ctx.render_with(
+        &mut pixmap,
+        &mut Resources::default(),
+        RasterizerSettings {
+            target_init: TargetInit::Clear(WHITE),
+            ..RasterizerSettings::default()
         },
     );
-    let (width, height) = (pixmap.width() as u32, pixmap.height() as u32);
     let pixels = pixmap.take_rgba8(ImageAlphaType::Alpha);
-    let image = RgbaImage::from_raw(width, height, pixels)
+    let image = RgbaImage::from_raw(size.0, size.1, pixels)
         .context("unexpected pixmap size from PDF renderer")?;
     let warnings = std::mem::take(&mut *collected.lock().unwrap());
     Ok((image, warnings))

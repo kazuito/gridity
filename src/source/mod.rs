@@ -10,6 +10,7 @@ use anyhow::Result;
 use image::RgbaImage;
 
 use crate::cli::{InputKind, SourceArgs};
+use crate::select::Crop;
 
 /// One thing to show in a cell: a PDF page, a video timestamp, an animation frame or an image file.
 #[derive(Debug, Clone)]
@@ -20,6 +21,8 @@ pub struct Item {
     pub native: Option<(u32, u32)>,
     pub key: ItemKey,
     pub vars: LabelVars,
+    /// Shown part of the page or frame; aspect and native already describe the cropped part.
+    pub crop: Option<Crop>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
