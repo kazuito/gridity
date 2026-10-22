@@ -19,6 +19,12 @@ The video tests need `ffmpeg`/`ffprobe` on `PATH`; they skip themselves when it 
 Before finishing, run all four commands above. If you change rendering, also render a real
 input and look at the output image (see "Manual verification").
 
+CI (`.github/workflows/ci.yml`) runs the same checks on Linux, macOS and Windows, plus
+`cargo check` with the MSRV (`rust-version` in `Cargo.toml`), `cargo deny check`
+(advisories, licenses, sources; config in `deny.toml`) and a check that `image`,
+`imageproc` and `ab_glyph` have no duplicate versions. When adding a dependency, run
+`cargo deny check` locally if `cargo-deny` is installed.
+
 ## Layout
 
 ```

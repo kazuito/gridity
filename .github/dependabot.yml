@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Pinned on purpose (AGENTS.md): upgrade deliberately and re-check the PDF fixtures.
+      - dependency-name: hayro
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
