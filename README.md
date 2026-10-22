@@ -4,7 +4,9 @@ Arrange PDF pages, video frames, GIF/APNG frames and images into labeled grid sh
 sized so an LLM can understand many pages or moments from a single image.
 
 ```sh
-gridity probe report.pdf                          # pages, sizes, sheet estimates
+gridity probe report.pdf                          # pages, sizes, sheet estimates, text size
+gridity probe report.pdf --per-page               # which pages need to be seen
+gridity text report.pdf                           # visible text of each page
 gridity render report.pdf                         # prints absolute paths of the sheets
 gridity render report.pdf --pages 3-8 --json      # manifest with cell coordinates
 gridity render report.pdf --pages 7 --crop 0,0.5,1,0.5   # close-up of the bottom half
@@ -29,7 +31,7 @@ Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
 ## Documentation
 
 `gridity guide [topic]` prints the bundled guide (`docs/guide/*.md`):
-`recipes`, `pdf`, `video`, `images`, `layout`, `output`. The design notes are in
+`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`. The design notes are in
 [`docs/PLAN.md`](docs/PLAN.md).
 
 ## License notes

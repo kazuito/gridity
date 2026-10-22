@@ -51,6 +51,20 @@ and no files.
 - `est_tokens` uses Claude's 28x28 px patch rule; other models count differently.
 - `--dry-run --json` prints the same structure without `path` and `bytes`.
 
+## Probe JSON (`gridity probe --json`)
+
+- `source`: as above, plus `page_sizes` (PDF) or `files` (images).
+- `estimates`: one entry per `--detail` with `per_sheet`, `sheets` (when the item count is
+  known), `scale` (smallest among the inputs), `text_12pt_px` (PDF) and `body_text_px`
+  (PDF with extractable text). With `--per-page`, `visual_scale` is the scale when only the
+  `mixed` and `graphics` pages are rendered, as the suggested command does. The default
+  detail has `"default": true`.
+- `body_text_pt` (PDF): typical body text size of the document.
+- `pages` (`--per-page`): per page `content`, `chars`, `unmapped`, `body_pt`, `small_pt`,
+  `scripts`, `short_lines`, `images`, `image_cover`, `vector_cover` (see
+  `gridity guide text`).
+- `suggestions`: ready-to-run commands.
+
 ## Errors
 
 Errors go to stderr as `error: ...` and an optional `hint: ...`. With `--json`, stdout also

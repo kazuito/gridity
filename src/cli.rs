@@ -17,6 +17,14 @@ Examples:
 Output: absolute paths of the written sheets, one per line (or a JSON manifest with --json).
 For agents: run `gridity guide` for usage, recipes and the output schema.";
 
+const TEXT_EXAMPLES: &str = "\
+Examples:
+  gridity text report.pdf                        # every page
+  gridity text report.pdf --pages 3-5 --json     # text plus content type per page
+
+Each page starts with a line like `--- p.3 · mixed · body 11pt ---`. Pages marked
+`mixed` or `graphics` have figures or text that cannot be extracted: render them.";
+
 const ROOT_HELP: &str = "\
 Run `gridity render --help` for all options.
 For agents: run `gridity guide` for usage, recipes and the output schema.";
@@ -40,6 +48,9 @@ pub enum Command {
     Render(Box<RenderArgs>),
     /// Show page count, duration, resolution and sheet estimates for an input
     Probe(ProbeArgs),
+    /// Print the visible text of PDF pages, with each page's content type
+    #[command(after_help = TEXT_EXAMPLES)]
+    Text(TextArgs),
     /// Print usage documentation for agents (Markdown)
     Guide(GuideArgs),
 }
@@ -294,6 +305,29 @@ pub struct ProbeArgs {
     /// Size limits used for the sheet estimates
     #[arg(long, value_enum, default_value = "compat")]
     pub preset: Preset,
+
+    /// Analyze every PDF page: content type, text size, images and drawings
+    #[arg(long)]
+    pub per_page: bool,
+
+    /// Print JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TextArgs {
+    /// PDF file
+    #[arg(value_name = "INPUT")]
+    pub input: PathBuf,
+
+    /// Pages to print, 1-based: "1-3,5,10-", "-4" [default: all]
+    #[arg(long, value_name = "LIST")]
+    pub pages: Option<String>,
+
+    /// Password for an encrypted PDF
+    #[arg(long)]
+    pub password: Option<String>,
 
     /// Print JSON
     #[arg(long)]

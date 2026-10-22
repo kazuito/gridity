@@ -116,6 +116,18 @@ pub fn parse_crop(spec: &str) -> Result<Crop, CliError> {
     })
 }
 
+/// Up to `n` 1-based page numbers spread evenly over `total` pages, first and last included.
+pub fn spread_pages(total: usize, n: usize) -> Vec<usize> {
+    if total <= n {
+        return (1..=total).collect();
+    }
+    let mut pages: Vec<usize> = (0..n)
+        .map(|i| 1 + (i * (total - 1) + (n - 1) / 2) / (n - 1).max(1))
+        .collect();
+    pages.dedup();
+    pages
+}
+
 /// Parses "90", "90.5", "90s", "500ms", "1m30s", "1h2m", "1:30", "01:02:03.5" into seconds.
 pub fn parse_time(s: &str) -> Result<f64, CliError> {
     let text = s.trim();
@@ -300,6 +312,13 @@ mod tests {
             height: 1.0,
         };
         assert_eq!(crop.pixels((100, 10)), (99, 0, 1, 10));
+    }
+
+    #[test]
+    fn spread_pages_covers_the_document() {
+        assert_eq!(spread_pages(3, 8), vec![1, 2, 3]);
+        assert_eq!(spread_pages(100, 5), vec![1, 26, 51, 75, 100]);
+        assert_eq!(spread_pages(10, 2), vec![1, 10]);
     }
 
     #[test]

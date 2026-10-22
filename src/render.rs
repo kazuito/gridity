@@ -616,7 +616,7 @@ fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4], natural_width: 
     }
 }
 
-fn round3(value: f64) -> f64 {
+pub fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
 

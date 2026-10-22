@@ -1,5 +1,19 @@
 # Recipes
 
+## Read a document with as few tokens as possible
+
+```sh
+gridity probe report.pdf --per-page    # content type and text size of every page
+gridity text report.pdf                # read the text pages as text
+gridity render report.pdf --pages 4-7,12 --detail low   # only pages that need to be seen
+gridity render report.pdf --pages 9 --crop 0,0.5,1,0.5  # close-up of a small part
+```
+
+`probe --per-page` suggests these commands for the file: the `--pages` list holds the
+`mixed` and `graphics` pages, and the detail is the lowest one that keeps the body text at
+8 px or more. Slides with large text usually fit at `--detail low`; papers with 10–11pt
+text need `medium` or more.
+
 ## Skim a whole PDF
 
 ```sh

@@ -35,8 +35,16 @@ Items are spread evenly: 10 items at 8 per sheet become 5 + 5, not 8 + 2.
 
 ## Scale
 
-Each cell in the manifest has a `scale`: sheet pixels per point for PDF pages, and
-displayed / native size for images, video and animations (`1.0` = full resolution).
+`gridity probe` reports how much each `--detail` shrinks the input, and the manifest
+gives a `scale` per cell:
+
+- PDF: sheet pixels per point. `probe` measures the document's body text and prints its
+  size on the sheet, e.g. `0.49 px/pt (body 22pt text = 11px)`, or the size of 12pt text
+  when the PDF has no extractable text. Text of 8 px or more is readable, about 6 px can
+  be skimmed, and smaller text needs a higher `--detail`, fewer `--pages` or `--crop`.
+  `probe` suggests the lowest detail that keeps the body text at 8 px or more.
+- Images, video, animations: displayed size / native size (`1.0` = full resolution).
+  `probe` reports the smallest scale among the inputs.
 
 ## Crop
 

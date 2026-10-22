@@ -36,17 +36,29 @@ fn fits_compat(width: u32, height: u32) -> bool {
 
 /// Writes a minimal PDF; each page is (width, height, rotate) in points.
 fn write_pdf(path: &Path, pages: &[(u32, u32, u32)]) {
+    let pages: Vec<(u32, u32, u32, String)> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, &(w, h, rotate))| {
+            let content = format!(
+                "BT /F1 48 Tf 50 {} Td (Page {}) Tj ET\n0 0 1 rg 60 80 120 {} re f\n",
+                h - 100,
+                i + 1,
+                40 + i * 20
+            );
+            (w, h, rotate, content)
+        })
+        .collect();
+    write_pdf_pages(path, &pages);
+}
+
+/// Writes a PDF whose pages are (width, height, rotate, content stream) with Helvetica as /F1.
+fn write_pdf_pages(path: &Path, pages: &[(u32, u32, u32, String)]) {
     let mut objects: Vec<Vec<u8>> =
         vec![b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec()];
     let pages_id = 1 + 2 * pages.len() + 1;
     let mut kids = Vec::new();
-    for (i, &(w, h, rotate)) in pages.iter().enumerate() {
-        let content = format!(
-            "BT /F1 48 Tf 50 {} Td (Page {}) Tj ET\n0 0 1 rg 60 80 120 {} re f\n",
-            h - 100,
-            i + 1,
-            40 + i * 20
-        );
+    for (w, h, rotate, content) in pages {
         objects.push(
             format!(
                 "<< /Length {} >>\nstream\n{content}\nendstream",
@@ -97,6 +109,23 @@ fn write_pdf(path: &Path, pages: &[(u32, u32, u32)]) {
         .bytes(),
     );
     std::fs::write(path, out).unwrap();
+}
+
+/// A page of 11pt body text lines, plus a 12pt word that is clipped away.
+fn text_page(lines: usize) -> String {
+    text_page_sized(lines, 11)
+}
+
+fn text_page_sized(lines: usize, size: usize) -> String {
+    let mut content = String::new();
+    for i in 0..lines {
+        content.push_str(&format!(
+            "BT /F1 {size} Tf 50 {} Td (Line {i} of body text here) Tj ET\n",
+            780 - i * (size + 3)
+        ));
+    }
+    content.push_str("q 0 0 40 40 re W n BT /F1 12 Tf 300 300 Td (Clipped) Tj ET Q\n");
+    content
 }
 
 fn write_png(path: &Path, width: u32, height: u32, shade: u8) {
@@ -246,6 +275,169 @@ fn rotated_pages_are_landscape() {
     let manifest = run_json(&["render", s(&pdf), "--dry-run"]);
     let rect = &manifest["sheets"][0]["cells"][0]["rect"];
     assert!(rect[2].as_u64() > rect[3].as_u64(), "rect {rect}");
+}
+
+#[test]
+fn probe_scale_matches_rendered_cells() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0); 4]);
+
+    let probe = run_json(&["probe", s(&pdf)]);
+    let estimates = probe["estimates"].as_array().unwrap();
+    let scales: Vec<f64> = estimates
+        .iter()
+        .map(|e| e["scale"].as_f64().unwrap())
+        .collect();
+    assert!(
+        scales[0] <= scales[1] && scales[1] < scales[2],
+        "{scales:?}"
+    );
+    let medium = &estimates[1];
+    let text_px = medium["text_12pt_px"].as_f64().unwrap();
+    assert!((text_px - 12.0 * scales[1]).abs() < 0.1);
+
+    let manifest = run_json(&["render", s(&pdf), "--dry-run"]);
+    for cell in manifest["sheets"][0]["cells"].as_array().unwrap() {
+        let width = cell["rect"][2].as_f64().unwrap();
+        assert!((cell["scale"].as_f64().unwrap() - width / 595.0).abs() < 0.001);
+        assert!((cell["scale"].as_f64().unwrap() - scales[1]).abs() < 0.001);
+    }
+}
+
+#[test]
+fn text_prints_visible_text_per_page() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf_pages(
+        &pdf,
+        &[
+            (595, 842, 0, text_page(10)),
+            (595, 842, 0, "0 0 1 rg 50 50 400 500 re f\n".to_string()),
+        ],
+    );
+
+    let output = gridity().args(["text", s(&pdf)]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("--- p.1 · text · "), "{stdout}");
+    assert!(stdout.contains("Line 0 of body text here\nLine 1 of body text here"));
+    assert!(!stdout.contains("Clipped"));
+    assert!(stdout.contains("--- p.2 · graphics · 0 chars"));
+
+    let report = run_json(&["text", s(&pdf), "--pages", "1"]);
+    let page = &report["pages"][0];
+    assert_eq!(page["page"], 1);
+    assert_eq!(page["content"], "text");
+    assert_eq!(page["body_pt"], 11.0);
+    assert_eq!(report["pages"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn probe_per_page_suggests_text_and_visual_pages() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page(10));
+    write_pdf_pages(
+        &pdf,
+        &[
+            (595, 842, 0, text_page(10)),
+            (595, 842, 0, figure),
+            (595, 842, 0, text_page(10)),
+        ],
+    );
+
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    assert_eq!(probe["body_text_pt"], 11.0);
+    let contents: Vec<&str> = probe["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(contents, ["text", "mixed", "text"]);
+    let medium = &probe["estimates"][1];
+    let body_px = medium["body_text_px"].as_f64().unwrap();
+    assert!((body_px - 11.0 * medium["scale"].as_f64().unwrap()).abs() < 0.1);
+    let suggestions: Vec<&str> = probe["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert!(suggestions[0].starts_with("gridity text "));
+    assert!(
+        suggestions.iter().any(|s| s.contains("--pages 2")),
+        "{suggestions:?}"
+    );
+}
+
+#[test]
+fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page_sized(10, 14));
+    let mut pages = vec![(595, 842, 0, text_page_sized(10, 14))];
+    pages.extend(std::iter::repeat_n((595, 842, 0, figure), 9));
+    write_pdf_pages(&pdf, &pages);
+
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    let low = &probe["estimates"][0];
+    assert!(
+        low["visual_scale"].as_f64() < low["scale"].as_f64(),
+        "fixture should plan the 9 visual pages tighter than all 10: {low}"
+    );
+    let render = probe["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .find(|s| s.starts_with("gridity render") && s.contains("--pages 2-10"))
+        .expect("a render suggestion for the visual pages");
+    let args: Vec<&str> = render.split_whitespace().skip(1).collect();
+    let manifest = run_json(&[&args[..], &["--dry-run"]].concat());
+    for cell in manifest["sheets"][0]["cells"].as_array().unwrap() {
+        let body_px = 14.0 * cell["scale"].as_f64().unwrap();
+        assert!(body_px >= 8.0, "{render}: body text at {body_px:.1}px");
+    }
+}
+
+#[test]
+fn image_only_pdf_suggests_no_text_extraction() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("scan.pdf");
+    write_pdf_pages(
+        &pdf,
+        &[(595, 842, 0, "0 0 1 rg 50 50 400 500 re f\n".into())],
+    );
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    let suggestions = probe["suggestions"].as_array().unwrap();
+    assert!(
+        suggestions
+            .iter()
+            .all(|s| !s.as_str().unwrap().starts_with("gridity text")),
+        "{suggestions:?}"
+    );
+    assert!(probe.get("body_text_pt").is_none());
+}
+
+#[test]
+fn text_and_per_page_reject_other_inputs() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 40, 30, 0);
+    gridity()
+        .args(["text", s(&png)])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("not a PDF"));
+    gridity()
+        .args(["probe", s(&png), "--per-page"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "--per-page works with PDF input only",
+        ));
 }
 
 #[test]

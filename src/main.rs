@@ -3,9 +3,11 @@ mod color;
 mod compose;
 mod detect;
 mod error;
+mod extract;
 mod guide;
 mod layout;
 mod output;
+mod pagetext;
 mod probe;
 mod render;
 mod select;
@@ -28,6 +30,7 @@ fn main() -> ExitCode {
     let json = match &cli.command {
         Command::Render(args) => args.json,
         Command::Probe(args) => args.json,
+        Command::Text(args) => args.json,
         Command::Guide(_) => false,
     };
     configure_threads(match &cli.command {
@@ -38,6 +41,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Render(args) => render::run(*args),
         Command::Probe(args) => probe::run(args),
+        Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
     };
     match result {

@@ -30,7 +30,8 @@ PDF・動画・画像・GIF/APNG の指定範囲をラベル付きグリッド�
 
 ```
 gridity render <INPUT>... [OPTIONS]   # 種別は自動判定（--type で上書き）
-gridity probe  <INPUT>    [--json]    # ページ数・長さ・解像度などを表示
+gridity probe  <INPUT>    [--json]    # ページ数・長さ・解像度などを表示（PDF は --per-page）
+gridity text   <PDF>      [--json]    # 見えているテキストとページごとの内容種別
 gridity guide  [TOPIC]                # エージェント向け使い方ドキュメント（Markdown）
 ```
 
@@ -127,6 +128,23 @@ gridity guide  [TOPIC]                # エージェント向け使い方ドキ�
 - 並列化は hayro の型が `Send` / `Sync` か確認してから。まずは逐次処理
 - `--crop` は `hayro::render_into` に平行移動を含む変換を渡し、切り抜き範囲だけをセルサイズで
   ラスタライズする（ページ全体を描いてから切ると、小さい範囲ほどメモリが膨らむため）
+
+### ページ解析（`pagetext.rs` と `source/pdf.rs::scan_page`）
+
+エージェントが「テキストで読めるページ」と「画像で見るべきページ」を分け、読める文字サイズの
+詳細度を選べるようにする。
+
+- `scan_page` は hayro の `Device` を実装した `Collector` でページを解釈だけして、見えている
+  グリフ（位置・サイズ・Unicode）、画像と図形の範囲を集める。クリップは外接矩形で追跡し、
+  クリップ外やページ外のグリフは数えない（スライドに切り抜いて貼った教科書ページなど）
+- 集計と判定は純粋関数（`pagetext.rs`）: 本文サイズ（文字数で重み付けした中央値）、小さい
+  文字（10 パーセンタイル）、画像・図形の被覆率（48x48 の格子で重なりを一度だけ数え、
+  ページ全面の背景とページの半分以上を囲む枠線は除く）、数式の兆候（上付き・下付き、
+  1〜2 文字の行の割合）
+- 内容種別: `text` / `mixed` / `graphics` / `empty`。閾値は `pagetext.rs` の定数
+- 読みやすさの目安は 8 px（`READABLE_PX`）。11pt 本文の report.pdf を各詳細度で目視し、
+  6.5 px はかろうじて読める、8 px は読めると判断した。`probe` は本文がこれ以上になる最小の
+  詳細度を提案するだけで、`render` の既定（`min_cell`）は変えない
 
 ### 動画（`source/video.rs`）
 
@@ -235,6 +253,8 @@ src/
   cli.rs        clap derive の定義
   detect.rs     入力種別の判定
   select.rs     --pages・時刻・--crop のパース、サンプリング（純粋関数）
+  pagetext.rs   PDF ページ解析の集計と判定、テキストの組み立て（純粋関数）
+  extract.rs    `text` コマンド
   layout.rs     レイアウト計算、fits()（純粋関数）
   compose.rs    シートの合成（セル・ラベル・ヘッダー）
   text.rs       フォントの読み込みと文字描画

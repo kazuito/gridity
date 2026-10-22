@@ -2,9 +2,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use hayro::hayro_interpret::{InterpreterSettings, InterpreterWarning, TransformExt};
+use hayro::hayro_interpret::font::{Glyph as FontGlyph, GlyphRun};
+use hayro::hayro_interpret::hayro_cmap::BfString;
+use hayro::hayro_interpret::{
+    BlendMode, ClipPath, Context as PageContext, Device, DrawMode, DrawProps, Image,
+    ImageDrawProps, InterpreterCache, InterpreterSettings, InterpreterWarning, RectExt, SoftMask,
+    TransformExt, interpret_page,
+};
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
-use hayro::kurbo::Affine;
+use hayro::kurbo::{Affine, BezPath, Point, Rect, Shape};
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::peniko::ImageAlphaType;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
@@ -14,6 +20,7 @@ use rayon::prelude::*;
 
 use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
 use crate::error::{CliError, input};
+use crate::pagetext::{BBox, Glyph, PageScan};
 use crate::select::Crop;
 
 pub struct PdfSource {
@@ -105,6 +112,14 @@ impl PdfSource {
             })
             .collect()
     }
+
+    /// Measures what is visible on 1-based `pages`, in parallel.
+    pub fn scan(&self, pages: &[usize]) -> Result<Vec<PageScan>> {
+        pages
+            .par_iter()
+            .map(|&page| scan_page(&self.data, &self.password, page - 1))
+            .collect()
+    }
 }
 
 fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
@@ -180,6 +195,122 @@ fn render_page(
         .context("unexpected pixmap size from PDF renderer")?;
     let warnings = std::mem::take(&mut *collected.lock().unwrap());
     Ok((image, warnings))
+}
+
+/// Interprets a page without rendering it and measures what is visible; hayro's borrowed types
+/// stay inside this function and `Collector`.
+fn scan_page(data: &Arc<Vec<u8>>, password: &str, index: usize) -> Result<PageScan> {
+    let pdf = load(data, password)?;
+    let page = &pdf.pages()[index];
+    let (width, height) = page.render_dimensions();
+    let transform = page.initial_transform(true).to_kurbo();
+    let page_box = Rect::new(0.0, 0.0, width as f64, height as f64);
+    let cache = InterpreterCache::new();
+    let mut context = PageContext::new(
+        transform,
+        page_box,
+        &cache,
+        page.xref(),
+        InterpreterSettings::default(),
+    );
+    let crop = transform
+        .transform_rect_bbox(page.intersected_crop_box().to_kurbo())
+        .intersect(page_box);
+    let mut collector = Collector {
+        clips: vec![crop],
+        scan: PageScan {
+            width: width as f64,
+            height: height as f64,
+            ..PageScan::default()
+        },
+    };
+    interpret_page(page, &mut context, &mut collector);
+    Ok(collector.scan)
+}
+
+/// Records visible glyphs and drawn areas. Clip paths are tracked by their bounding boxes.
+struct Collector {
+    clips: Vec<Rect>,
+    scan: PageScan,
+}
+
+impl Collector {
+    fn clip(&self) -> Rect {
+        *self.clips.last().expect("the page clip is never popped")
+    }
+
+    fn visible_box(&self, bbox: Rect) -> Option<BBox> {
+        let visible = bbox.intersect(self.clip());
+        (visible.width() > 0.0 && visible.height() > 0.0)
+            .then_some([visible.x0, visible.y0, visible.x1, visible.y1])
+    }
+}
+
+impl<'a> Device<'a> for Collector {
+    fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
+        let bbox = props.transform.transform_rect_bbox(path.bounding_box());
+        let Some(visible) = self.visible_box(bbox) else {
+            return;
+        };
+        match mode {
+            DrawMode::Stroke(_) => self.scan.stroke_boxes.push(visible),
+            DrawMode::Invisible => {}
+            _ => self.scan.path_boxes.push(visible),
+        }
+    }
+
+    fn push_clip_path(&mut self, clip_path: &ClipPath) {
+        let clip = self.clip().intersect(clip_path.path.bounding_box());
+        self.clips.push(clip);
+    }
+
+    fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
+
+    fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, mode: &DrawMode) {
+        if matches!(mode, DrawMode::Invisible) {
+            return;
+        }
+        let clip = self.clip();
+        for glyph in run.glyphs() {
+            let transform = props.transform * glyph.transform();
+            let origin = transform * Point::ZERO;
+            if !clip.contains(origin) {
+                self.scan.hidden_glyphs += 1;
+                continue;
+            }
+            let advance = match &**glyph {
+                FontGlyph::Outline(outline) => outline.advance_width(),
+                FontGlyph::Type3(_) => None,
+            };
+            // Glyph space uses 1000 units per em, so the transform scales by size / 1000.
+            let end = transform * Point::new(advance.unwrap_or(500.0) as f64, 0.0);
+            self.scan.glyphs.push(Glyph {
+                start: (origin.x, origin.y),
+                end: (end.x, end.y),
+                size: transform.determinant().abs().sqrt() * 1000.0,
+                text: glyph.as_unicode().map(|text| match text {
+                    BfString::Char(c) => c.to_string(),
+                    BfString::String(s) => s,
+                }),
+            });
+        }
+    }
+
+    fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
+        let pixels = Rect::new(0.0, 0.0, image.width() as f64, image.height() as f64);
+        let bbox = props.transform.transform_rect_bbox(pixels);
+        if let Some(visible) = self.visible_box(bbox) {
+            self.scan.image_boxes.push(visible);
+        }
+    }
+
+    fn pop_clip(&mut self) {
+        if self.clips.len() > 1 {
+            self.clips.pop();
+        }
+    }
+
+    fn pop_transparency_group(&mut self) {}
 }
 
 fn describe_warning(warning: InterpreterWarning) -> String {

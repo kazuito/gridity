@@ -9,20 +9,23 @@ limits. Read one sheet instead of taking many screenshots.
 | Command | Purpose |
 |---|---|
 | `gridity probe <INPUT>` | Page count / duration / resolution and how many sheets a render needs |
+| `gridity text <PDF>` | Visible text of each page and whether the page needs to be seen |
 | `gridity render <INPUT>... [OPTIONS]` | Write sheets; prints their absolute paths |
 | `gridity guide [TOPIC]` | This documentation |
 
 ## Typical workflow
 
-1. `gridity probe report.pdf` — learn the size of the input and the sheet estimates.
-2. `gridity render report.pdf --dry-run` — optional: check the layout and token cost.
-3. `gridity render report.pdf` — read the printed paths with your image viewer tool.
-4. Zoom in where needed: `gridity render report.pdf --pages 7 --detail high`, or `--crop`
-   for part of a page.
+1. `gridity probe report.pdf` — learn the size of the input, the sheet estimates and how
+   large the text will be. For PDFs add `--per-page` to see which pages need images.
+2. PDFs: `gridity text report.pdf` — read text pages as text; it costs far fewer tokens.
+3. `gridity render report.pdf --pages ...` — render the pages or frames that need to be
+   seen, and read the printed paths with your image viewer tool.
+4. Zoom in where needed: `--pages 7 --detail high`, or `--crop` for part of a page.
 
 ## Output contract
 
-- stdout: one absolute path per sheet (or a JSON manifest with `--json`).
+- stdout: `render` prints one absolute path per sheet (or a JSON manifest with `--json`);
+  `probe` and `text` print their report (JSON with `--json`).
 - stderr: warnings and errors (`error: ...` / `hint: ...`).
 - Sheets go to `$TMPDIR/gridity/<name>-<hash>/` unless `-o` is given; re-running the
   same command overwrites the same files.
@@ -33,6 +36,7 @@ limits. Read one sheet instead of taking many screenshots.
 
 - `gridity guide recipes` — task-oriented examples
 - `gridity guide pdf` — page selection, passwords
+- `gridity guide text` — text extraction and page analysis for PDFs
 - `gridity guide video` — time ranges, sampling, GIF/APNG
 - `gridity guide images` — files and directories
 - `gridity guide layout` — presets, detail, grid and style options

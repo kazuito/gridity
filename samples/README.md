@@ -9,8 +9,9 @@ samples/render.sh video       # only the cases whose name contains "video"
 samples/generate.sh           # regenerate samples/inputs (typst, qpdf, ffmpeg, magick, python3)
 ```
 
-`samples/out/` is gitignored. Each case directory holds the sheets, `manifest.json`
-(`--json`), `command.txt` and `stderr.txt` (warnings).
+`samples/out/` is gitignored. Each render case directory holds the sheets, `manifest.json`
+(`--json`), `command.txt` and `stderr.txt` (warnings). The `probe-*` and `text-*` cases
+write the command's stdout to `output.txt` instead, shown inline in `index.html`.
 
 ## Inputs
 
@@ -26,5 +27,5 @@ samples/generate.sh           # regenerate samples/inputs (typst, qpdf, ffmpeg, 
 | `photos/` | mixed aspect ratios, natural sort (`img2` before `img10`), a 96x64 image that must not be upscaled, a JPEG with EXIF orientation 6 that must show "↑ TOP" upright |
 | `shots/` | 10 screenshots; `--per-sheet 8` must split them 5 + 5 |
 
-The PDFs are built from `sources/*.typ`. Add a case by adding a `case_` line in `render.sh`
+The PDFs are built from `sources/*.typ`. Add a case by adding a `case_` (render) or `text_case_` (other commands) line in `render.sh`
 and, if it needs a new input, a step in `generate.sh`.

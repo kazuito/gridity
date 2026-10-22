@@ -34,6 +34,26 @@ case_() {
   fi
 }
 
+# Text cases capture stdout of a non-render command in output.txt.
+text_case_() {
+  local name=$1
+  shift
+  [[ -n $filter && $name != *"$filter"* ]] && return
+  rm -rf "${out:?}/$name"
+  mkdir -p "$out/$name"
+  echo "gridity $*" >"$out/$name/command.txt"
+  if $G "$@" >"$out/$name/output.txt" 2>"$out/$name/stderr.txt"; then
+    echo "ok    $name"
+  else
+    echo "FAIL  $name (see $out/$name/stderr.txt)"
+    failed=1
+  fi
+}
+
+text_case_ probe-report probe inputs/report.pdf --per-page
+text_case_ probe-mixed probe inputs/mixed.pdf --per-page
+text_case_ text-report text inputs/report.pdf --pages 1-2
+text_case_ text-mixed text inputs/mixed.pdf
 case_ pdf-report inputs/report.pdf
 case_ pdf-report-low inputs/report.pdf --detail low
 case_ pdf-report-high inputs/report.pdf --pages 1-4 --detail high
@@ -62,11 +82,12 @@ case_ crop-gif inputs/counter.gif --count 4 --crop 0.5,0,0.5,1
   echo '<!doctype html><meta charset="utf-8"><title>gridity samples</title>'
   echo '<style>body{font:14px system-ui;margin:24px;background:#f3f4f6}section{margin-bottom:40px}'
   echo 'code{background:#e5e7eb;padding:2px 6px;border-radius:4px}img{max-width:100%;border:1px solid #9ca3af;margin:8px 8px 0 0;vertical-align:top}'
-  echo 'pre{color:#b45309;white-space:pre-wrap}</style>'
+  echo 'pre{color:#b45309;white-space:pre-wrap}pre.out{color:#111827;background:#fff;padding:8px}</style>'
   for dir in "$out"/*/; do
     name=$(basename "$dir")
     echo "<section id=\"$name\"><h2>$name</h2><code>$(<"$dir/command.txt")</code>"
-    echo "<a href=\"$name/manifest.json\">manifest.json</a>"
+    [[ -e $dir/manifest.json ]] && echo "<a href=\"$name/manifest.json\">manifest.json</a>"
+    [[ -e $dir/output.txt ]] && echo "<pre class=\"out\">$(sed 's/&/\&amp;/g; s/</\&lt;/g' "$dir/output.txt")</pre>"
     [[ -s $dir/stderr.txt ]] && echo "<pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g' "$dir/stderr.txt")</pre>"
     for img in "$dir"*.png "$dir"*.jpg; do
       [[ -e $img ]] && echo "<div><a href=\"$name/$(basename "$img")\"><img src=\"$name/$(basename "$img")\"></a></div>"

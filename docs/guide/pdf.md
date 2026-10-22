@@ -28,6 +28,12 @@ A page beyond the end is an error (exit 2) that states the page count.
 - `--crop X,Y,W,H` renders only a region of each page, sharp at the cell size (see
   `gridity guide layout`).
 
+## Text first
+
+`gridity text file.pdf` prints the visible text of each page and marks the pages that have
+figures, tables or formulas; `gridity probe file.pdf --per-page` turns that into suggested
+commands. See `gridity guide text`.
+
 ## Encrypted PDFs
 
 Password-protected files fail with exit 3 and the hint `pass --password <PASSWORD>`.

@@ -33,11 +33,14 @@ src/
   text.rs        font loading (embedded BIZ UDGothic) and text drawing
   output.rs      output paths (tmp dir + hash), encoding, manifest structs (serde)
   render.rs      `render` command: wires everything together; shared helpers for `probe`
-  probe.rs       `probe` command: source info, per-detail estimates, suggested commands
+  probe.rs       `probe` command: source info, per-detail estimates and scale, `--per-page`
+                 PDF analysis, suggested commands
+  extract.rs     `text` command: visible PDF text per page with its content type
+  pagetext.rs    pure page analysis: text assembly, text sizes, coverage, content type
   guide.rs       `guide` command: include_str! of docs/guide/*.md
   source/
     mod.rs       Item, ItemKey, LabelVars, enum Source, fit_size(), Warnings
-    pdf.rs       hayro renderer
+    pdf.rs       hayro renderer (`render_page`) and page scanner (`scan_page`, `Collector`)
     video.rs     ffprobe/ffmpeg subprocesses
     anim.rs      GIF/APNG via image::AnimationDecoder
     images.rs    image files/directories, EXIF orientation, natural sort
@@ -54,6 +57,9 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 `select_items` (→ `Vec<Item>`, cropped by `--crop`) → `layout::plan` (→ `Vec<SheetPlan>`)
 → per sheet: `Source::render` → `compose` → `encode` → write → print paths or manifest.
 
+`probe` and `text` scan PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
+summarize them with `pagetext::summarize`.
+
 Each source turns a selection into `Item`s (aspect ratio, optional native size, key, label
 variables), then renders a batch of items into `RgbaImage`s that fit given boxes.
 
@@ -68,8 +74,11 @@ variables), then renders a batch of items into `RgbaImage`s that fit given boxes
 - **Raster sources are never upscaled.** `fit_size` caps at `Item::native`, and
   `PlanOptions::max_cell` (from `render::native_bounds`) shrinks cells to the largest
   native size. With `--crop`, both describe the cropped region.
-- **Output contract.** stdout carries only sheet paths (one absolute path per line), the
-  JSON manifest, or the dry-run summary. Everything else goes to stderr. Exit codes:
+- **Probe numbers equal render numbers.** `probe` computes `scale` from `layout::plan`
+  with real default `RenderArgs`, the same path `render` uses.
+- **Output contract.** For `render`, stdout carries only sheet paths (one absolute path
+  per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
+  `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
   printed as `{"error": {...}}` on stdout.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
@@ -92,7 +101,8 @@ variables), then renders a batch of items into `RgbaImage`s that fit given boxes
   - dispatch input kinds with `enum Source` and `match`, not traits or generics;
   - no async; parallelism only through `rayon` `par_iter` (thread count set once in
     `main::configure_threads`);
-  - keep hayro's borrowed types inside `source/pdf.rs::render_page`.
+  - keep hayro's borrowed types inside `source/pdf.rs` (`render_page`, `scan_page` and
+    the lifetime-free `Collector`, which implements `Device<'a>` for every `'a`).
 - Errors: return `anyhow::Result`. For anything the user or an agent can fix, return a
   `CliError` built with `error::usage` / `input` / `dependency` and add `.with_hint(...)`
   with a concrete next step (a flag to pass, or `see: gridity guide <topic>`).
@@ -118,6 +128,11 @@ Add an `InputKind` variant, detection in `detect.rs`, a module in `source/` with
 `open` / `items` / `render`, a `Source` variant, and a case in every `match` in
 `render.rs` and `probe.rs` (the compiler lists them). Also add defaults: label, label
 position, format, `min_cell`, label variables, and a guide topic.
+
+**Tuning page analysis**
+Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
+changes with `gridity text` / `gridity probe --per-page` on `samples/inputs/*.pdf` and a
+real slide deck or paper, and keep `docs/guide/text.md` and `docs/PLAN.md` in sync.
 
 **Tuning `--detail`**
 `render::min_cell` holds the minimum cell long edge per kind and detail. It is calibrated
