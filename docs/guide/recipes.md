@@ -1,0 +1,54 @@
+# Recipes
+
+## Skim a whole PDF
+
+```sh
+gridity probe deck.pdf                 # shows sheets needed per --detail level
+gridity render deck.pdf                # 4 pages per sheet by default
+gridity render deck.pdf --detail low   # 9 pages per sheet, for a quick overview
+```
+
+If the render fails with "more than --max-sheets", either narrow `--pages`, use
+`--detail low`, or pass the `--max-sheets` value suggested in the hint.
+
+## Read one page or figure closely
+
+```sh
+gridity render paper.pdf --pages 7 --detail high
+gridity render paper.pdf --pages 7 --per-sheet 1 --preset hires   # largest possible
+```
+
+## Understand a video
+
+```sh
+gridity render talk.mp4                                   # one sheet, evenly spaced frames
+gridity render talk.mp4 --every 30s --max-sheets 4        # regular sampling
+gridity render talk.mp4 --start 12:00 --end 14:00 --every 5s
+gridity render talk.mp4 --at 1:05,7:30,12:44 --detail high
+```
+
+Start broad (default sampling), then narrow with `--start/--end` around the moments that
+matter.
+
+## Compare screenshots or photos
+
+```sh
+gridity render before.png after.png --cols 2
+gridity render screenshots/ --label "{index}: {name}"
+```
+
+## Locate a cell precisely
+
+```sh
+gridity render deck.pdf --json
+```
+
+Each cell in the manifest has `rect: [x, y, width, height]` in sheet pixels plus its page,
+time, frame or file, so "the chart in the third cell" maps back to an exact source.
+
+## Save sheets next to your work
+
+```sh
+gridity render deck.pdf -o review/          # review/deck.grid-01.png, ...
+gridity render deck.pdf -o review/deck.png  # review/deck-01.png, ...
+```
