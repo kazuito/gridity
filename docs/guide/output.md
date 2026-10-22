@@ -54,6 +54,8 @@ and no files.
 - `scale` is sheet pixels per point for PDF pages, and displayed / native pixels for
   images and frames.
 - `crop` (only with `--crop`) is the shown region as `[x, y, width, height]` fractions.
+- `error` (only when an item could not be decoded) explains why the cell is a gray
+  placeholder; the cell keeps its planned `rect`.
 - `est_tokens` uses Claude's 28x28 px patch rule; other models count differently.
 - `--dry-run --json` prints the same structure without `path` and `bytes`.
 

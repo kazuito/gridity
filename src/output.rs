@@ -284,6 +284,9 @@ pub struct CellInfo {
     /// Shown region as [x, y, width, height] fractions of the page or frame.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<[f64; 4]>,
+    /// Why the item could not be decoded; the cell then holds a gray placeholder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[cfg(test)]

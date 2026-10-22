@@ -67,7 +67,9 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 summarize them with `pagetext::summarize`.
 
 Each source turns a selection into `Item`s (aspect ratio, optional native size, key, label
-variables), then renders a batch of items into `RgbaImage`s that fit given boxes.
+variables), then renders a batch of items into `Rendered` images that fit given boxes. An
+item that cannot be decoded becomes a gray placeholder of the planned size with `error` set
+(shown in the manifest cell), so one bad file never fails a whole render.
 
 ## Invariants (do not break)
 

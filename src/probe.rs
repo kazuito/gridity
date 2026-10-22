@@ -74,6 +74,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         estimates.push(estimate);
     }
     let suggestions = suggestions(&source, &args, &estimates, body_pt, per_page);
+    let warnings = source.open_warnings();
 
     if args.json {
         let mut report = json!({
@@ -81,6 +82,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
             "preset": preset_name(args.preset),
             "estimates": estimates,
             "suggestions": suggestions,
+            "warnings": warnings,
         });
         if let Some(body) = body_pt {
             report["body_text_pt"] = json!(body);
@@ -102,6 +104,9 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         }
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
+        for warning in &warnings {
+            eprintln!("warning: {warning}");
+        }
         print_text(&source, &info, args.preset, &estimates, body_pt, per_page);
         println!(
             "suggested commands ({} input; heuristic starting points, adjust after looking at the sheets):",

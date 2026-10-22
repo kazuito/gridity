@@ -6,11 +6,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use image::{ImageFormat, Rgba, RgbaImage};
+use image::{ImageFormat, RgbaImage};
 use rayon::prelude::*;
 use serde_json::Value;
 
-use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
+use super::{Item, ItemKey, LabelVars, Rendered, fit_size};
 use crate::error::{dependency, input};
 use crate::select::Crop;
 
@@ -134,12 +134,7 @@ impl VideoSource {
             .collect()
     }
 
-    pub fn render(
-        &self,
-        items: &[Item],
-        boxes: &[(u32, u32)],
-        warnings: &Warnings,
-    ) -> Result<Vec<RgbaImage>> {
+    pub fn render(&self, items: &[Item], boxes: &[(u32, u32)]) -> Result<Vec<Rendered>> {
         items
             .par_iter()
             .zip(boxes)
@@ -154,16 +149,12 @@ impl VideoSource {
                         break;
                     }
                     if let Some(frame) = self.extract_frame((t - back).max(0.0), size, item.crop)? {
-                        return Ok(frame);
+                        return Ok(Rendered::ok(frame));
                     }
                 }
-                warnings.push(format!(
-                    "no frame could be decoded at {t:.2}s; the cell is left blank"
-                ));
-                Ok(RgbaImage::from_pixel(
-                    size.0,
-                    size.1,
-                    Rgba([128, 128, 128, 255]),
+                Ok(Rendered::failed(
+                    size,
+                    format!("no frame could be decoded at {t:.2}s"),
                 ))
             })
             .collect()

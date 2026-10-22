@@ -1301,3 +1301,85 @@ fn long_pdfs_keep_every_page_in_order() {
     let shown: Vec<u64> = cells.iter().map(|c| c["page"].as_u64().unwrap()).collect();
     assert_eq!(shown, [120, 7, 299]);
 }
+
+fn truncate(path: &Path, fraction: f64) {
+    let bytes = std::fs::read(path).unwrap();
+    let keep = (bytes.len() as f64 * fraction) as usize;
+    std::fs::write(path, &bytes[..keep]).unwrap();
+}
+
+#[test]
+fn dot_files_in_directories_are_ignored() {
+    let dir = TempDir::new().unwrap();
+    write_png(&dir.path().join("shot-01.png"), 64, 48, 10);
+    write_png(&dir.path().join("shot-02.png"), 64, 48, 90);
+    std::fs::write(
+        dir.path().join("._shot-01.png"),
+        b"\0\x05\x16\x07\0\x02\0\0",
+    )
+    .unwrap();
+
+    let manifest = run_json(&["render", s(dir.path()), "-o", s(&dir.path().join("out"))]);
+    let names: Vec<&str> = manifest["sheets"][0]["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["shot-01.png", "shot-02.png"]);
+    assert_eq!(manifest["warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn unreadable_images_are_skipped_or_left_blank() {
+    let dir = TempDir::new().unwrap();
+    let images = dir.path().join("images");
+    std::fs::create_dir(&images).unwrap();
+    write_png(&images.join("a.png"), 64, 48, 10);
+    std::fs::write(images.join("b.png"), b"not a png at all").unwrap();
+    write_noise_png(&images.join("c.png"), 200, 150);
+    truncate(&images.join("c.png"), 0.5);
+
+    let planned = run_json(&["render", s(&images), "--dry-run"]);
+    let manifest = run_json(&["render", s(&images), "-o", s(&dir.path().join("out"))]);
+    let cells = manifest["sheets"][0]["cells"].as_array().unwrap();
+    assert_eq!(
+        cells.len(),
+        2,
+        "b.png has no readable header and is skipped"
+    );
+    assert!(cells[0].get("error").is_none());
+    assert!(cells[1]["file"].as_str().unwrap().ends_with("c.png"));
+    assert!(cells[1]["error"].is_string());
+    assert_eq!(cells[1]["rect"], planned["sheets"][0]["cells"][1]["rect"]);
+    let warnings = manifest["warnings"].to_string();
+    assert!(warnings.contains("b.png"), "{warnings}");
+    assert!(warnings.contains("empty cell"), "{warnings}");
+
+    let probe = run_json(&["probe", s(&images)]);
+    assert_eq!(probe["source"]["count"], 2);
+    assert!(probe["warnings"].to_string().contains("b.png"));
+
+    gridity()
+        .args(["render", s(&images.join("b.png")), "--type", "images"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn damaged_animations_keep_their_readable_frames() {
+    let dir = TempDir::new().unwrap();
+    let gif = dir.path().join("anim.gif");
+    write_gif(&gif, 12, 100);
+    truncate(&gif, 0.6);
+
+    let manifest = run_json(&["render", s(&gif), "--dry-run"]);
+    let frames = manifest["source"]["frames"].as_u64().unwrap();
+    assert!((1..12).contains(&frames), "{frames} frames");
+    assert!(
+        manifest["warnings"]
+            .to_string()
+            .contains("could be decoded")
+    );
+    run_json(&["render", s(&gif), "-o", s(&dir.path().join("out"))]);
+}

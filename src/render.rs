@@ -156,6 +156,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
     )?;
 
     let warnings = Warnings::default();
+    for warning in source.open_warnings() {
+        warnings.push(warning);
+    }
     let mut sheet_infos = Vec::with_capacity(sheets.len());
     let mut written = Vec::new();
     if !args.dry_run {
@@ -181,23 +184,34 @@ pub fn run(args: RenderArgs) -> Result<()> {
         let (width, height) = sheet.grid.sheet_size(layout.chrome);
         let boxes = vec![(sheet.grid.cell_width, sheet.grid.cell_height); sheet.len];
 
+        let mut errors = vec![None; sheet.len];
         let (rects, path, bytes) = if args.dry_run {
             (predicted_rects(sheet, sheet_items, &layout), None, None)
         } else {
-            let images = source.render(sheet_items, &boxes, &warnings)?;
+            let rendered = source.render(sheet_items, &boxes, &warnings)?;
             log(format!(
                 "rendered sheet {}/{}",
                 sheet_index + 1,
                 sheets.len()
             ));
-            let cells = images
+            let mut cells = Vec::with_capacity(rendered.len());
+            for ((cell, label), (item, error)) in rendered
                 .into_iter()
                 .zip(&labels)
-                .map(|(image, label)| Cell {
-                    image,
+                .zip(sheet_items.iter().zip(&mut errors))
+            {
+                if let Some(message) = &cell.error {
+                    warnings.push(format!(
+                        "item {} is drawn as an empty cell: {message}",
+                        item.vars.index
+                    ));
+                }
+                *error = cell.error;
+                cells.push(Cell {
+                    image: cell.image,
                     label: label.clone(),
-                })
-                .collect();
+                });
+            }
             let (canvas, rects) = compose(
                 sheet.grid,
                 layout.chrome,
@@ -247,8 +261,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
                 .iter()
                 .zip(labels)
                 .zip(rects)
-                .map(|((item, label), rect)| {
-                    cell_info(item, label, rect, natural_width(&source, item))
+                .zip(errors)
+                .map(|(((item, label), rect), error)| CellInfo {
+                    error,
+                    ..cell_info(item, label, rect, natural_width(&source, item))
                 })
                 .collect(),
         });
@@ -646,6 +662,7 @@ fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4], natural_width: 
         rect,
         scale: round3(rect[2] as f64 / natural_width),
         crop: item.crop.map(|c| [c.x, c.y, c.width, c.height]),
+        error: None,
     }
 }
 

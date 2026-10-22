@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::Result;
-use image::RgbaImage;
+use image::{Rgba, RgbaImage};
 
 use crate::cli::{InputKind, SourceArgs};
 use crate::error::{CliError, input};
@@ -80,18 +80,48 @@ impl Source {
         }
     }
 
-    /// Renders `items` so each fits inside the matching `(width, height)` box.
+    /// Renders `items` so each fits inside the matching `(width, height)` box. An item that
+    /// cannot be decoded becomes a placeholder of the planned size instead of failing the sheet.
     pub fn render(
         &self,
         items: &[Item],
         boxes: &[(u32, u32)],
         warnings: &Warnings,
-    ) -> Result<Vec<RgbaImage>> {
+    ) -> Result<Vec<Rendered>> {
         match self {
             Source::Pdf(s) => s.render(items, boxes, warnings),
-            Source::Video(s) => s.render(items, boxes, warnings),
+            Source::Video(s) => s.render(items, boxes),
             Source::Anim(s) => s.render(items, boxes),
-            Source::Images(s) => s.render(items, boxes),
+            Source::Images(s) => Ok(s.render(items, boxes)),
+        }
+    }
+
+    /// Problems found while opening that left some inputs or frames out.
+    pub fn open_warnings(&self) -> Vec<String> {
+        match self {
+            Source::Images(s) => s.skipped.clone(),
+            Source::Anim(s) => s.damaged.clone().into_iter().collect(),
+            Source::Pdf(_) | Source::Video(_) => Vec::new(),
+        }
+    }
+}
+
+/// A rendered cell image; `error` is set when the item could not be decoded and `image` is a
+/// placeholder.
+pub struct Rendered {
+    pub image: RgbaImage,
+    pub error: Option<String>,
+}
+
+impl Rendered {
+    pub fn ok(image: RgbaImage) -> Rendered {
+        Rendered { image, error: None }
+    }
+
+    pub fn failed(size: (u32, u32), error: impl Into<String>) -> Rendered {
+        Rendered {
+            image: RgbaImage::from_pixel(size.0, size.1, Rgba([128, 128, 128, 255])),
+            error: Some(error.into()),
         }
     }
 }

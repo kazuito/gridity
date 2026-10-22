@@ -8,7 +8,7 @@ use image::codecs::png::PngDecoder;
 use image::imageops::{self, FilterType};
 use image::{AnimationDecoder, Frames, ImageDecoder, RgbaImage};
 
-use super::{Item, ItemKey, LabelVars, decode_error, decode_limits, fit_size};
+use super::{Item, ItemKey, LabelVars, Rendered, decode_error, decode_limits, fit_size};
 use crate::error::input;
 
 /// Browsers show GIF and APNG frames with a delay of 10 ms or less for 100 ms; do the same so
@@ -29,6 +29,8 @@ pub struct AnimSource {
     /// Start time of each frame in seconds.
     pub starts: Vec<f64>,
     pub duration: f64,
+    /// Set when decoding stopped early; only the frames before the damage are used.
+    pub damaged: Option<String>,
 }
 
 impl AnimSource {
@@ -37,9 +39,21 @@ impl AnimSource {
         let mut starts = Vec::new();
         let mut elapsed = 0.0;
         let mut size = (0, 0);
+        let mut damaged = None;
         // First pass reads only the timing so memory stays bounded for long animations.
         for frame in frames(path, format)? {
-            let frame = frame.map_err(|e| decode_error(path, e))?;
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(e) if !starts.is_empty() => {
+                    damaged = Some(format!(
+                        "only the first {} frames could be decoded: {:#}",
+                        starts.len(),
+                        anyhow::Error::from(decode_error(path, e))
+                    ));
+                    break;
+                }
+                Err(e) => return Err(decode_error(path, e).into()),
+            };
             size = frame.buffer().dimensions();
             starts.push(elapsed);
             let (num, den) = frame.delay().numer_denom_ms();
@@ -54,6 +68,7 @@ impl AnimSource {
             size,
             starts,
             duration: elapsed,
+            damaged,
         })
     }
 
@@ -90,7 +105,7 @@ impl AnimSource {
             .collect()
     }
 
-    pub fn render(&self, items: &[Item], boxes: &[(u32, u32)]) -> Result<Vec<RgbaImage>> {
+    pub fn render(&self, items: &[Item], boxes: &[(u32, u32)]) -> Result<Vec<Rendered>> {
         let wanted: Vec<usize> = items
             .iter()
             .map(|item| match item.key {
@@ -101,8 +116,18 @@ impl AnimSource {
         let last = wanted.iter().copied().max().unwrap_or(0);
         let mut images: Vec<Option<RgbaImage>> = vec![None; items.len()];
 
+        let mut failure = None;
         for (index, frame) in frames(&self.path, self.format)?.enumerate().take(last + 1) {
-            let frame = frame.map_err(|e| decode_error(&self.path, e))?;
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(e) => {
+                    failure = Some(format!(
+                        "{:#}",
+                        anyhow::Error::from(decode_error(&self.path, e))
+                    ));
+                    break;
+                }
+            };
             for (slot, _) in wanted.iter().enumerate().filter(|(_, w)| **w == index) {
                 let (w, h) = fit_size(items[slot].aspect, boxes[slot], items[slot].native);
                 let buffer = frame.buffer();
@@ -114,10 +139,19 @@ impl AnimSource {
                 images[slot] = Some(imageops::resize(&region, w, h, FilterType::CatmullRom));
             }
         }
-        images
+        Ok(images
             .into_iter()
-            .map(|image| image.context("animation ended before a requested frame"))
-            .collect()
+            .enumerate()
+            .map(|(slot, image)| match image {
+                Some(image) => Rendered::ok(image),
+                None => Rendered::failed(
+                    fit_size(items[slot].aspect, boxes[slot], items[slot].native),
+                    failure
+                        .clone()
+                        .unwrap_or_else(|| "the animation ended before this frame".to_string()),
+                ),
+            })
+            .collect())
     }
 }
 

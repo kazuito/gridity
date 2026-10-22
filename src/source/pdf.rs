@@ -19,7 +19,7 @@ use hayro::{RenderCache, RenderSettings};
 use image::RgbaImage;
 use rayon::prelude::*;
 
-use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
+use super::{Item, ItemKey, LabelVars, Rendered, Warnings, fit_size};
 use crate::cli::PasswordArgs;
 use crate::error::{CliError, input, usage};
 use crate::pagetext::{BBox, Glyph, PageScan};
@@ -94,7 +94,7 @@ impl PdfSource {
         items: &[Item],
         boxes: &[(u32, u32)],
         warnings: &Warnings,
-    ) -> Result<Vec<RgbaImage>> {
+    ) -> Result<Vec<Rendered>> {
         items
             .par_iter()
             .zip(boxes)
@@ -107,7 +107,7 @@ impl PdfSource {
                 for warning in page_warnings {
                     warnings.push(format!("page {}: {}", index + 1, describe_warning(warning)));
                 }
-                Ok(image)
+                Ok(Rendered::ok(image))
             })
             .collect()
     }

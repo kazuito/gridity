@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageReader, RgbaImage};
+use image::{DynamicImage, ImageDecoder, ImageReader};
 use rayon::prelude::*;
 
-use super::{Item, ItemKey, LabelVars, decode_error, decode_limits, file_name, fit_size};
+use super::{Item, ItemKey, LabelVars, Rendered, decode_error, decode_limits, file_name, fit_size};
 use crate::error::input;
 
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
@@ -21,6 +21,8 @@ pub struct ImageFile {
 pub struct ImagesSource {
     pub files: Vec<ImageFile>,
     pub name: String,
+    /// Inputs left out because their header could not be read.
+    pub skipped: Vec<String>,
 }
 
 impl ImagesSource {
@@ -42,7 +44,7 @@ impl ImagesSource {
                 .into());
         }
 
-        let files = paths
+        let opened: Vec<Result<ImageFile>> = paths
             .par_iter()
             .map(|path| {
                 Ok(ImageFile {
@@ -50,13 +52,32 @@ impl ImagesSource {
                     size: oriented_size(path)?,
                 })
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
+        let mut files = Vec::new();
+        let mut errors = Vec::new();
+        for result in opened {
+            match result {
+                Ok(file) => files.push(file),
+                Err(error) => errors.push(error),
+            }
+        }
+        if files.is_empty() {
+            return Err(errors.remove(0));
+        }
+        let skipped = errors
+            .iter()
+            .map(|e| format!("skipped an unreadable input: {e:#}"))
+            .collect();
 
         let name = match inputs {
             [single] => file_name(single),
             _ => format!("{} images", files.len()),
         };
-        Ok(ImagesSource { files, name })
+        Ok(ImagesSource {
+            files,
+            name,
+            skipped,
+        })
     }
 
     pub fn items(&self) -> Vec<Item> {
@@ -78,7 +99,7 @@ impl ImagesSource {
             .collect()
     }
 
-    pub fn render(&self, items: &[Item], boxes: &[(u32, u32)]) -> Result<Vec<RgbaImage>> {
+    pub fn render(&self, items: &[Item], boxes: &[(u32, u32)]) -> Vec<Rendered> {
         items
             .par_iter()
             .zip(boxes)
@@ -87,12 +108,16 @@ impl ImagesSource {
                     unreachable!("image items are files")
                 };
                 let (w, h) = fit_size(item.aspect, bounds, item.native);
-                let mut image = decode_oriented(path)?;
-                if let Some(crop) = item.crop {
-                    let (x, y, cw, ch) = crop.pixels((image.width(), image.height()));
-                    image = image.crop_imm(x, y, cw, ch);
+                match decode_oriented(path) {
+                    Ok(mut image) => {
+                        if let Some(crop) = item.crop {
+                            let (x, y, cw, ch) = crop.pixels((image.width(), image.height()));
+                            image = image.crop_imm(x, y, cw, ch);
+                        }
+                        Rendered::ok(image.resize_exact(w, h, FilterType::CatmullRom).to_rgba8())
+                    }
+                    Err(error) => Rendered::failed((w, h), format!("{error:#}")),
                 }
-                Ok(image.resize_exact(w, h, FilterType::CatmullRom).to_rgba8())
             })
             .collect()
     }
@@ -102,10 +127,15 @@ fn list_images(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
         .with_context(|| format!("failed to read directory {}", dir.display()))?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.is_file() && has_image_extension(p))
+        .filter(|p| p.is_file() && has_image_extension(p) && !is_hidden(p))
         .collect();
     paths.sort_by(|a, b| natural_cmp(&file_name(a), &file_name(b)));
     Ok(paths)
+}
+
+/// Dot files such as macOS `._name.png` resource forks carry an image extension but no image.
+fn is_hidden(path: &Path) -> bool {
+    file_name(path).starts_with('.')
 }
 
 pub fn has_image_extension(path: &Path) -> bool {

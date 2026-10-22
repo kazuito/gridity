@@ -51,6 +51,7 @@ Frames are laid out at their display size: non-square pixels (SAR) and rotation 
 ## Output
 
 JPEG by default (`--format png` to change). Undecodable timestamps become gray cells and a
-warning, never a silent gap.
+warning, never a silent gap; the manifest cell carries `error`. A damaged GIF or APNG is
+read up to the first broken frame, and a warning tells how many frames were used.
 
 `--pages`, `--password` and `--password-file` are rejected for video and animation input.
