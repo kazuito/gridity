@@ -39,6 +39,13 @@
     "source": {
       "$ref": "#/$defs/SourceInfo"
     },
+    "suggested_calls": {
+      "description": "The suggestions as `gridity mcp` tool calls, in the same order; pass `arguments` as\nthey are.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SuggestedCall"
+      }
+    },
     "suggestions": {
       "description": "Ready-to-run commands; heuristic starting points.",
       "type": "array",
@@ -59,9 +66,124 @@
     "preset",
     "estimates",
     "suggestions",
+    "suggested_calls",
     "warnings"
   ],
   "$defs": {
+    "CallArguments": {
+      "description": "Tool parameters, named as in the tool's input schema. `render` calls set `max_sheets`\nwhenever they write more sheets than the tool allows by default.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "every": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "description": "For `text`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": {
+          "description": "For `render` and `probe`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_sheets": {
+          "description": "Set when the render writes more sheets than the tool's default limit of 4.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "pages": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "password_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "per_page": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "per_sheet": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "preset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Preset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InputKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "Content": {
       "oneOf": [
         {
@@ -84,6 +206,26 @@
           "description": "Little or unextractable text: look at the image.",
           "type": "string",
           "const": "graphics"
+        }
+      ]
+    },
+    "Detail": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "medium"
+          ]
+        },
+        {
+          "description": "More items per sheet, smaller cells",
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "description": "Fewer items per sheet, larger cells",
+          "type": "string",
+          "const": "high"
         }
       ]
     },
@@ -167,6 +309,23 @@
         "path",
         "width",
         "height"
+      ]
+    },
+    "InputKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "pdf",
+            "video",
+            "images"
+          ]
+        },
+        {
+          "description": "Animated GIF or APNG",
+          "type": "string",
+          "const": "anim"
+        }
       ]
     },
     "PageReport": {
@@ -277,6 +436,20 @@
         "orientation",
         "count",
         "pages"
+      ]
+    },
+    "Preset": {
+      "oneOf": [
+        {
+          "description": "Long edge <= 1568px and <= 1568 visual tokens (works with every Claude model)",
+          "type": "string",
+          "const": "compat"
+        },
+        {
+          "description": "Long edge <= 2576px and <= 4784 visual tokens (Claude 4.7 and later models)",
+          "type": "string",
+          "const": "hires"
+        }
       ]
     },
     "SourceInfo": {
@@ -454,6 +627,32 @@
             "count"
           ]
         }
+      ]
+    },
+    "SuggestedCall": {
+      "description": "One suggested command as a `gridity mcp` tool call.",
+      "type": "object",
+      "properties": {
+        "arguments": {
+          "description": "Parameters for the tool, complete and ready to pass unchanged.",
+          "$ref": "#/$defs/CallArguments"
+        },
+        "tool": {
+          "$ref": "#/$defs/Tool"
+        }
+      },
+      "required": [
+        "tool",
+        "arguments"
+      ]
+    },
+    "Tool": {
+      "description": "The `gridity mcp` tool to call.",
+      "type": "string",
+      "enum": [
+        "render",
+        "text",
+        "probe"
       ]
     }
   }

@@ -88,7 +88,13 @@ raises it. JSON Schemas for all four documents are in the repository under
 - `pages` (`--per-page`): per page `content`, `chars`, `unmapped`, `body_pt`, `small_pt`,
   `scripts`, `short_lines`, `images`, `image_cover`, `vector_cover` (see
   `gridity guide text`).
-- `suggestions`: ready-to-run commands.
+- `suggestions`: ready-to-run commands. They repeat `--type`, `--preset` (unless `compat`)
+  and `--password-file` from the probe, and add `--max-sheets` when a render needs more
+  than 10 sheets.
+- `suggested_calls`: the same suggestions as MCP tool calls (`gridity guide mcp`), in the
+  same order: `tool` (`render`, `text` or `probe`) and `arguments`, the tool parameters
+  as they are (`inputs` unquoted, `max_sheets` when a render needs more than the tool's
+  default of 4 sheets).
 - `warnings`: inputs that were skipped (unreadable images, damaged animations).
 
 ## Errors

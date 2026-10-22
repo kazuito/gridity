@@ -4,10 +4,10 @@ use clap::builder::RangedU64ValueParser;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::Rgba;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::color::parse_color;
-use crate::layout::MAX_SHEETS;
+use crate::layout::{DEFAULT_MAX_SHEETS, MAX_SHEETS};
 
 const RENDER_EXAMPLES: &str = "\
 Examples:
@@ -61,7 +61,7 @@ pub enum Command {
     Mcp(McpArgs),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InputKind {
     Pdf,
@@ -71,7 +71,7 @@ pub enum InputKind {
     Images,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Preset {
     /// Long edge <= 1568px and <= 1568 visual tokens (works with every Claude model)
@@ -80,7 +80,7 @@ pub enum Preset {
     Hires,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Detail {
     /// More items per sheet, smaller cells
@@ -255,7 +255,7 @@ pub struct LayoutArgs {
     pub rows: Option<u32>,
 
     /// Fail instead of writing more sheets than this (1-1000)
-    #[arg(long, value_name = "N", default_value_t = 10, value_parser = RangedU64ValueParser::<usize>::new().range(1..=MAX_SHEETS as u64), help_heading = "Layout")]
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_SHEETS, value_parser = RangedU64ValueParser::<usize>::new().range(1..=MAX_SHEETS as u64), help_heading = "Layout")]
     pub max_sheets: usize,
 
     /// Space between cells in pixels (0-1000)

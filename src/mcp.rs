@@ -25,7 +25,7 @@ use crate::probe::ProbeReport;
 /// Newest first; a client asking for another version gets the newest.
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 /// Sheets per call unless `max_sheets` is given: each sheet is a full image in the context.
-const DEFAULT_MAX_SHEETS: usize = 4;
+pub const DEFAULT_MAX_SHEETS: usize = 4;
 /// Images returned by one call, as base64.
 const MAX_RESULT_BASE64_BYTES: usize = 20_000_000;
 
@@ -320,7 +320,11 @@ impl Server {
             unreachable!("argv starts with probe")
         };
         let report: ProbeReport = crate::probe::report(args)?;
-        Ok(success(&report, "probe report:", Vec::new()))
+        Ok(success(
+            &report,
+            "probe report; make each suggested_calls entry as given (tool + arguments):",
+            Vec::new(),
+        ))
     }
 
     fn text(&self, p: TextParams) -> Result<Value> {

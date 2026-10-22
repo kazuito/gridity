@@ -27,7 +27,7 @@ files, are never read);
 
 | Tool | Returns |
 |---|---|
-| `probe` | sheet estimates and suggested render commands (`gridity guide output`) |
+| `probe` | sheet estimates and suggested calls (`gridity guide output`) |
 | `text` | visible text of PDF pages and their content type (`gridity guide text`) |
 | `render` | the sheets as images, plus the manifest (cell rects, labels, pages or times) |
 | `guide` | this documentation; `topic` is a guide topic or `all` |
@@ -38,6 +38,12 @@ Parameters are the CLI options with underscores: `per_sheet` for `--per-sheet`, 
 without image blocks when only the manifest is needed. Error messages and hints name the
 tool parameters (`max_sheets 6`, not `--max-sheets 6`); a flag marked `(CLI only)` has no
 tool parameter.
+
+`probe` returns its suggestions twice: `suggestions` as CLI commands, and
+`suggested_calls` as `{ "tool": ..., "arguments": {...} }` for this server. Make a
+suggested call with its `arguments` as they are (add `images: false` to a `render` if you
+only need the manifest); they already carry `max_sheets` when a render needs more than 4
+sheets.
 
 The JSON document (manifest or report) is both the first text block of the result and its
 `structuredContent`. Failures are results with `isError: true` and a text block holding

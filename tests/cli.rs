@@ -1651,3 +1651,149 @@ fn mcp_text_returns_the_pages_that_fit_and_names_the_rest() {
     assert_eq!(returned_pages(&rest[0]), [4, 5, 6]);
     assert!(rest[0]["structuredContent"].get("next_pages").is_none());
 }
+
+/// A running `gridity mcp` server that answers one request at a time.
+struct McpSession {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    next_id: i64,
+}
+
+impl McpSession {
+    fn start() -> McpSession {
+        let mut child = StdCommand::new(env!("CARGO_BIN_EXE_gridity"))
+            .arg("mcp")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut session = McpSession {
+            stdin: child.stdin.take().unwrap(),
+            stdout: std::io::BufReader::new(child.stdout.take().unwrap()),
+            child,
+            next_id: 0,
+        };
+        session.request(
+            "initialize",
+            serde_json::json!({"protocolVersion": "2025-11-25", "capabilities": {},
+                               "clientInfo": {"name": "test", "version": "0"}}),
+        );
+        session
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        use std::io::{BufRead, Write};
+        self.next_id += 1;
+        let message = serde_json::json!({"jsonrpc": "2.0", "id": self.next_id,
+                                         "method": method, "params": params});
+        writeln!(self.stdin, "{message}").unwrap();
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["id"], self.next_id);
+        response["result"].clone()
+    }
+
+    fn call(&mut self, tool: &str, arguments: Value) -> Value {
+        self.request(
+            "tools/call",
+            serde_json::json!({"name": tool, "arguments": arguments}),
+        )
+    }
+
+    fn close(self) {
+        drop(self.stdin);
+        let mut child = self.child;
+        assert!(child.wait().unwrap().success());
+    }
+}
+
+/// Probes each input through `gridity mcp`, makes every suggested call in the same session and
+/// returns the render suggestions whose call needs `max_sheets` while the command does not.
+fn make_suggested_calls(probes: &[Value]) -> Vec<(u64, String)> {
+    let mut mcp = McpSession::start();
+    let mut beyond_mcp_default = Vec::new();
+    for probe in probes {
+        let result = mcp.call("probe", probe.clone());
+        assert_eq!(result["isError"], false, "{probe}: {result}");
+        let report = &result["structuredContent"];
+        let commands = report["suggestions"].as_array().unwrap();
+        let calls = report["suggested_calls"].as_array().unwrap();
+        assert_eq!(commands.len(), calls.len(), "{report}");
+        for (command, call) in commands.iter().zip(calls) {
+            let command = command.as_str().unwrap();
+            let tool = call["tool"].as_str().unwrap();
+            assert!(
+                command.starts_with(&format!("gridity {tool} ")),
+                "{command}"
+            );
+            let mut arguments = call["arguments"].clone();
+            let max_sheets = arguments["max_sheets"].as_u64();
+            if tool == "render" {
+                arguments["images"] = false.into();
+                if let Some(max) = max_sheets.filter(|_| !command.contains("--max-sheets")) {
+                    beyond_mcp_default.push((max, command.to_string()));
+                }
+            }
+            let result = mcp.call(tool, arguments);
+            assert_eq!(result["isError"], false, "{call}: {result}");
+            if tool == "render" {
+                let sheets = result["structuredContent"]["sheets"].as_array().unwrap();
+                assert!(sheets.len() as u64 <= max_sheets.unwrap_or(4), "{call}");
+            }
+        }
+    }
+    mcp.close();
+    for (max, command) in &beyond_mcp_default {
+        assert!((5..=10).contains(max), "{max}: {command}");
+    }
+    beyond_mcp_default
+}
+
+#[test]
+fn mcp_suggested_pdf_calls_succeed_as_they_are() {
+    let dir = TempDir::new().unwrap();
+    let report = dir.path().join("report.pdf");
+    write_pdf_pages(&report, &vec![(595, 842, 0, text_page(10)); 12]);
+    let figures = dir.path().join("figures.pdf");
+    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page(10));
+    let mut pages = vec![(595, 842, 0, text_page(10))];
+    pages.extend(std::iter::repeat_n((595, 842, 0, figure), 11));
+    write_pdf_pages(&figures, &pages);
+    let beyond_mcp_default = make_suggested_calls(&[
+        serde_json::json!({"inputs": [s(&report)]}),
+        serde_json::json!({"inputs": [s(&report)], "per_page": true}),
+        serde_json::json!({"inputs": [s(&figures)], "per_page": true}),
+    ]);
+    assert!(
+        !beyond_mcp_default.is_empty(),
+        "the fixtures should get a render of 5-10 sheets"
+    );
+}
+
+#[test]
+fn mcp_suggested_media_calls_succeed_as_they_are() {
+    let dir = TempDir::new().unwrap();
+    let shots = dir.path().join("my shots");
+    std::fs::create_dir(&shots).unwrap();
+    for i in 0..30 {
+        write_png(&shots.join(format!("{i:02}.png")), 640, 480, i as u8);
+    }
+    let gif = dir.path().join("anim.gif");
+    write_gif(&gif, 30, 100);
+    let mut probes = vec![
+        serde_json::json!({"inputs": [s(&shots)]}),
+        serde_json::json!({"inputs": [s(&gif)]}),
+    ];
+    if have_ffmpeg() {
+        let video = dir.path().join("clip.mp4");
+        write_video(&video, &[]);
+        probes.push(serde_json::json!({"inputs": [s(&video)]}));
+    }
+    let beyond_mcp_default = make_suggested_calls(&probes);
+    assert!(
+        !beyond_mcp_default.is_empty(),
+        "30 images should need 5-10 sheets at the default detail"
+    );
+}

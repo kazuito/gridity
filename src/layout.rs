@@ -6,6 +6,8 @@ use crate::error::{CliError, Reason, usage};
 
 /// Claude splits images into 28x28 px patches; one patch costs one visual token.
 const PATCH: u32 = 28;
+/// `--max-sheets` when it is not given.
+pub const DEFAULT_MAX_SHEETS: usize = 10;
 /// Largest value `--max-sheets` accepts.
 pub const MAX_SHEETS: usize = 1000;
 

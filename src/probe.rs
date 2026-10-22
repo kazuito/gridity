@@ -14,7 +14,8 @@ use crate::pagetext::{
 use crate::render::{
     Layout, build_layout, compact_ranges, kind_name, native_bounds, preset_name, round3,
 };
-use crate::select::{format_time, spread_pages};
+use crate::select::{Sampling, format_time, sample_count, spread_pages};
+use crate::source::pdf::PdfSource;
 use crate::source::{Source, fit_size};
 
 /// Pages measured for the body text size when `--per-page` is not given.
@@ -35,6 +36,9 @@ pub struct ProbeReport {
     pub estimates: Vec<Estimate>,
     /// Ready-to-run commands; heuristic starting points.
     pub suggestions: Vec<String>,
+    /// The suggestions as `gridity mcp` tool calls, in the same order; pass `arguments` as
+    /// they are.
+    pub suggested_calls: Vec<SuggestedCall>,
     /// Median body text size over the measured pages (PDF).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_text_pt: Option<f64>,
@@ -64,6 +68,70 @@ pub struct Estimate {
     /// Set on the detail level `render` uses by default.
     #[serde(default, skip_serializing_if = "is_false")]
     pub default: bool,
+}
+
+/// One suggested command as a `gridity mcp` tool call.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SuggestedCall {
+    pub tool: Tool,
+    /// Parameters for the tool, complete and ready to pass unchanged.
+    pub arguments: CallArguments,
+}
+
+/// The `gridity mcp` tool to call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Tool {
+    Render,
+    Text,
+    Probe,
+}
+
+impl Tool {
+    fn name(self) -> &'static str {
+        match self {
+            Tool::Render => "render",
+            Tool::Text => "text",
+            Tool::Probe => "probe",
+        }
+    }
+}
+
+/// Tool parameters, named as in the tool's input schema. `render` calls set `max_sheets`
+/// whenever they write more sheets than the tool allows by default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, JsonSchema)]
+pub struct CallArguments {
+    /// For `render` and `probe`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<Vec<String>>,
+    /// For `text`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<InputKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub every: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<Preset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Detail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub per_sheet: Option<usize>,
+    /// Set when the render writes more sheets than the tool's default limit of 4.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_sheets: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub per_page: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_file: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -114,6 +182,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
     };
 
     let mut estimates = Vec::new();
+    let mut layouts = Vec::new();
     for (detail, name) in DETAILS {
         let mut layout = build_layout(&default_render_args(args.preset, name), kind)?;
         layout.options.max_cell = native_bounds(&source);
@@ -134,12 +203,16 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
             visual_scale,
             default: detail == Detail::Medium,
         });
+        layouts.push(layout);
     }
+    let suggested = suggestions(&source, &estimates, &layouts, body_pt, per_page)?;
+    let target = Target::new(&args);
     Ok(ProbeReport {
         schema_version: SCHEMA_VERSION,
         source: crate::render::source_info(&source, true),
         preset: preset_name(args.preset).to_string(),
-        suggestions: suggestions(&source, &args, &estimates, body_pt, per_page),
+        suggestions: suggested.iter().map(|s| s.command(&target)).collect(),
+        suggested_calls: suggested.iter().map(|s| s.call(&target)).collect(),
         estimates,
         body_text_pt: body_pt,
         pages: per_page.map(|pages| {
@@ -282,40 +355,149 @@ fn median_aspect(shapes: &[Shape]) -> f64 {
     aspects[aspects.len() / 2]
 }
 
+/// A suggested command, written out both as a command line and as an MCP tool call.
+struct Suggestion {
+    tool: Tool,
+    /// Selection and layout. `max_sheets` here is passed whatever the default limit is.
+    arguments: CallArguments,
+    /// Sheets the render writes; `max_sheets` is added when they exceed the default limit.
+    sheets: usize,
+}
+
+/// What every suggestion repeats from the probe's own arguments.
+struct Target {
+    inputs: Vec<String>,
+    kind: Option<InputKind>,
+    /// Set unless it is the default, which `render` would use instead.
+    preset: Option<Preset>,
+    password_file: Option<String>,
+}
+
+impl Target {
+    fn new(args: &ProbeArgs) -> Target {
+        Target {
+            inputs: args
+                .inputs
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            kind: args.kind,
+            preset: (args.preset != Preset::Compat).then_some(args.preset),
+            password_file: args
+                .source
+                .password
+                .password_file
+                .as_ref()
+                .map(|p| p.display().to_string()),
+        }
+    }
+}
+
+impl Suggestion {
+    fn new(tool: Tool, arguments: CallArguments) -> Suggestion {
+        Suggestion {
+            tool,
+            arguments,
+            sheets: 0,
+        }
+    }
+
+    fn render(sheets: usize, arguments: CallArguments) -> Suggestion {
+        Suggestion {
+            tool: Tool::Render,
+            arguments,
+            sheets,
+        }
+    }
+
+    /// Complete arguments for a server or command line whose sheet limit defaults to
+    /// `default_max_sheets`.
+    fn arguments(&self, target: &Target, default_max_sheets: usize) -> CallArguments {
+        let text = self.tool == Tool::Text;
+        CallArguments {
+            inputs: (!text).then(|| target.inputs.clone()),
+            input: target.inputs.first().filter(|_| text).cloned(),
+            kind: target.kind.filter(|_| !text),
+            preset: target.preset.filter(|_| !text),
+            password_file: target.password_file.clone(),
+            max_sheets: self
+                .arguments
+                .max_sheets
+                .or((self.sheets > default_max_sheets).then_some(self.sheets)),
+            ..self.arguments.clone()
+        }
+    }
+
+    fn call(&self, target: &Target) -> SuggestedCall {
+        SuggestedCall {
+            tool: self.tool,
+            arguments: self.arguments(target, crate::mcp::DEFAULT_MAX_SHEETS),
+        }
+    }
+
+    fn command(&self, target: &Target) -> String {
+        let a = self.arguments(target, crate::layout::DEFAULT_MAX_SHEETS);
+        let mut line = format!("gridity {}", self.tool.name());
+        for input in a.inputs.iter().flatten().chain(&a.input) {
+            line.push(' ');
+            line.push_str(&quote(input));
+        }
+        let mut flag = |name: &str, value: Option<String>| {
+            if let Some(value) = value {
+                line.push_str(&format!(" --{name} {value}"));
+            }
+        };
+        flag("pages", a.pages);
+        flag("start", a.start);
+        flag("end", a.end);
+        flag("every", a.every);
+        flag("count", a.count.map(|n| n.to_string()));
+        flag("detail", a.detail.map(|d| detail_name(d).to_string()));
+        flag("per-sheet", a.per_sheet.map(|n| n.to_string()));
+        flag("max-sheets", a.max_sheets.map(|n| n.to_string()));
+        flag("type", a.kind.map(|k| kind_name(k).to_string()));
+        flag("preset", a.preset.map(|p| preset_name(p).to_string()));
+        flag("password-file", a.password_file.as_deref().map(quote));
+        if a.per_page == Some(true) {
+            line.push_str(" --per-page");
+        }
+        line
+    }
+}
+
 fn suggestions(
     source: &Source,
-    args: &ProbeArgs,
     estimates: &[Estimate],
+    layouts: &[Layout],
     body_pt: Option<f64>,
     pages: Option<&[(usize, PageSummary)]>,
-) -> Vec<String> {
-    let input = args
-        .inputs
-        .iter()
-        .map(|p| quote(&p.display().to_string()))
-        .collect::<Vec<_>>()
-        .join(" ");
+) -> Result<Vec<Suggestion>> {
     let per_sheet = |i: usize| estimates[i].per_sheet;
     let sheets = |i: usize| estimates[i].sheets.unwrap_or(1);
+    let high = DETAILS.len() - 1;
     let mut list = Vec::new();
     match source {
         Source::Pdf(pdf) => {
+            let page_sheets =
+                |detail: usize, pages: &[usize]| planned_sheets(&layouts[detail], pdf, pages);
             let detail = readable_detail(estimates, body_pt);
             if body_pt.is_some() {
-                list.push(format!("gridity text {input}"));
+                list.push(Suggestion::new(Tool::Text, CallArguments::default()));
             }
             match pages {
                 Some(pages) => {
                     let visual = visual_pages(pages);
                     if visual.is_empty() {
-                        return list;
+                        return Ok(list);
                     }
                     let numbers: Vec<usize> = visual.iter().map(|(page, _)| *page).collect();
-                    list.push(format!(
-                        "gridity render {input} --pages {}{}{}",
-                        compact_ranges(&numbers),
-                        detail_flag(detail),
-                        max_sheets(numbers.len().div_ceil(per_sheet(detail)))
+                    list.push(Suggestion::render(
+                        page_sheets(detail, &numbers)?,
+                        CallArguments {
+                            pages: Some(compact_ranges(&numbers)),
+                            detail: non_default_detail(detail),
+                            ..Default::default()
+                        },
                     ));
                     let scale = visual_scale(estimates, detail);
                     let close: Vec<usize> = visual
@@ -325,64 +507,137 @@ fn suggestions(
                         .collect();
                     match close.as_slice() {
                         [] => {}
-                        [page] => list.push(format!(
-                            "gridity render {input} --pages {page} --per-sheet 1"
+                        [page] => list.push(Suggestion::render(
+                            1,
+                            CallArguments {
+                                pages: Some(page.to_string()),
+                                per_sheet: Some(1),
+                                ..Default::default()
+                            },
                         )),
-                        _ if detail + 1 < DETAILS.len() => list.push(format!(
-                            "gridity render {input} --pages {} --detail high{}",
-                            compact_ranges(&close),
-                            max_sheets(close.len().div_ceil(per_sheet(DETAILS.len() - 1)))
+                        _ if detail < high => list.push(Suggestion::render(
+                            page_sheets(high, &close)?,
+                            CallArguments {
+                                pages: Some(compact_ranges(&close)),
+                                detail: Some(Detail::High),
+                                ..Default::default()
+                            },
                         )),
-                        _ => list.push(format!(
-                            "gridity render {input} --pages {} --per-sheet 1{}",
-                            compact_ranges(&close),
-                            max_sheets(close.len())
+                        _ => list.push(Suggestion::render(
+                            close.len(),
+                            CallArguments {
+                                pages: Some(compact_ranges(&close)),
+                                per_sheet: Some(1),
+                                ..Default::default()
+                            },
                         )),
                     }
                 }
                 None => {
-                    let flag = detail_flag(detail);
-                    if sheets(detail) <= 10 {
-                        list.push(format!("gridity render {input}{flag}"));
-                    } else {
-                        list.push(format!(
-                            "gridity render {input} --pages 1-{}{flag}",
-                            (per_sheet(detail) * 2).min(pdf.page_count())
+                    if sheets(detail) <= crate::layout::DEFAULT_MAX_SHEETS {
+                        list.push(Suggestion::render(
+                            sheets(detail),
+                            CallArguments {
+                                detail: non_default_detail(detail),
+                                ..Default::default()
+                            },
                         ));
-                        list.push(format!("gridity probe {input} --per-page"));
+                    } else {
+                        let first: Vec<usize> =
+                            (1..=(per_sheet(detail) * 2).min(pdf.page_count())).collect();
+                        list.push(Suggestion::render(
+                            page_sheets(detail, &first)?,
+                            CallArguments {
+                                pages: Some(format!("1-{}", first.len())),
+                                detail: non_default_detail(detail),
+                                ..Default::default()
+                            },
+                        ));
+                        list.push(Suggestion::new(
+                            Tool::Probe,
+                            CallArguments {
+                                per_page: Some(true),
+                                ..Default::default()
+                            },
+                        ));
                     }
-                    list.push(format!("gridity render {input} --pages 1 --detail high"));
+                    list.push(Suggestion::render(
+                        1,
+                        CallArguments {
+                            pages: Some("1".to_string()),
+                            detail: Some(Detail::High),
+                            ..Default::default()
+                        },
+                    ));
                 }
             }
         }
         Source::Images(_) => {
-            list.push(format!("gridity render {input}"));
-            if sheets(1) > 10 {
-                list.push(format!(
-                    "gridity render {input} --detail low --max-sheets {}",
-                    sheets(0)
+            list.push(Suggestion::render(sheets(1), CallArguments::default()));
+            if sheets(1) > crate::layout::DEFAULT_MAX_SHEETS {
+                list.push(Suggestion::render(
+                    sheets(0),
+                    CallArguments {
+                        detail: Some(Detail::Low),
+                        max_sheets: Some(sheets(0)),
+                        ..Default::default()
+                    },
                 ));
             }
         }
         Source::Video(video) => {
-            list.push(format!("gridity render {input}"));
+            list.push(Suggestion::render(1, CallArguments::default()));
             if let Some(d) = video.duration {
                 let step = nice_step(d / (per_sheet(1) as f64 * 3.0));
-                list.push(format!(
-                    "gridity render {input} --every {step}s --max-sheets 3"
+                let frames = sample_count(0.0, d, &Sampling::Every(step as f64));
+                let every_sheets = frames.div_ceil(per_sheet(1)).max(3);
+                list.push(Suggestion::render(
+                    every_sheets,
+                    CallArguments {
+                        every: Some(format!("{step}s")),
+                        max_sheets: Some(every_sheets),
+                        ..Default::default()
+                    },
                 ));
-                list.push(format!(
-                    "gridity render {input} --start 0:00 --end {} --detail high",
-                    format_time((d / 4.0).max(1.0), d >= 3600.0, false)
+                list.push(Suggestion::render(
+                    1,
+                    CallArguments {
+                        start: Some("0:00".to_string()),
+                        end: Some(format_time((d / 4.0).max(1.0), d >= 3600.0, false)),
+                        detail: Some(Detail::High),
+                        ..Default::default()
+                    },
                 ));
             }
         }
         Source::Anim(_) => {
-            list.push(format!("gridity render {input}"));
-            list.push(format!("gridity render {input} --count {}", per_sheet(0)));
+            list.push(Suggestion::render(1, CallArguments::default()));
+            list.push(Suggestion::render(
+                per_sheet(0).div_ceil(per_sheet(1)),
+                CallArguments {
+                    count: Some(per_sheet(0)),
+                    ..Default::default()
+                },
+            ));
         }
     }
-    list
+    Ok(list)
+}
+
+/// Sheets `render` writes for these PDF pages, planned the way `render` plans them.
+fn planned_sheets(layout: &Layout, pdf: &PdfSource, pages: &[usize]) -> Result<usize> {
+    let shapes: Vec<Shape> = pages
+        .iter()
+        .map(|&page| page_shape(pdf.page_sizes[page - 1]))
+        .collect();
+    let sheets = plan(
+        shapes.len(),
+        median_aspect(&shapes),
+        layout.limits,
+        layout.chrome,
+        &layout.options,
+    )?;
+    Ok(sheets.len())
 }
 
 /// Index into DETAILS of the lowest detail whose body text stays readable on the sheets that
@@ -401,20 +656,17 @@ fn visual_scale(estimates: &[Estimate], detail: usize) -> f64 {
     estimate.visual_scale.unwrap_or(estimate.scale)
 }
 
-/// `--max-sheets` for renders that need more sheets than the default limit of 10.
-fn max_sheets(count: usize) -> String {
-    if count > 10 {
-        format!(" --max-sheets {count}")
-    } else {
-        String::new()
-    }
+/// The detail at this index into DETAILS, unless it is the default.
+fn non_default_detail(detail: usize) -> Option<Detail> {
+    (DETAILS[detail].0 != Detail::Medium).then_some(DETAILS[detail].0)
 }
 
-fn detail_flag(detail: usize) -> String {
-    match detail {
-        1 => String::new(),
-        d => format!(" --detail {}", DETAILS[d].1),
-    }
+fn detail_name(detail: Detail) -> &'static str {
+    DETAILS
+        .iter()
+        .find(|(d, _)| *d == detail)
+        .map(|(_, name)| *name)
+        .unwrap_or_default()
 }
 
 fn nice_step(seconds: f64) -> u64 {
@@ -564,6 +816,129 @@ mod tests {
     fn posix_quoting() {
         assert_eq!(quote("my file.pdf"), "'my file.pdf'");
         assert_eq!(quote("it's.pdf"), "'it'\\''s.pdf'");
+    }
+
+    fn target(input: &str) -> Target {
+        Target {
+            inputs: vec![input.to_string()],
+            kind: None,
+            preset: None,
+            password_file: None,
+        }
+    }
+
+    #[test]
+    fn max_sheets_follow_each_default_limit() {
+        let target = target("doc.pdf");
+        let max_sheets = |sheets: usize, pinned: Option<usize>| {
+            let suggestion = Suggestion::render(
+                sheets,
+                CallArguments {
+                    max_sheets: pinned,
+                    ..Default::default()
+                },
+            );
+            (
+                suggestion.command(&target),
+                suggestion.call(&target).arguments.max_sheets,
+            )
+        };
+        let plain = "gridity render doc.pdf".to_string();
+        assert_eq!(max_sheets(4, None), (plain.clone(), None));
+        assert_eq!(max_sheets(5, None), (plain.clone(), Some(5)));
+        assert_eq!(max_sheets(10, None), (plain, Some(10)));
+        assert_eq!(
+            max_sheets(11, None),
+            (
+                "gridity render doc.pdf --max-sheets 11".to_string(),
+                Some(11)
+            )
+        );
+        assert_eq!(
+            max_sheets(3, Some(3)),
+            ("gridity render doc.pdf --max-sheets 3".to_string(), Some(3))
+        );
+    }
+
+    #[test]
+    fn command_and_call_carry_the_same_arguments() {
+        let target = Target {
+            kind: Some(InputKind::Pdf),
+            preset: Some(Preset::Hires),
+            password_file: Some("pw.txt".to_string()),
+            ..target("doc.pdf")
+        };
+        let render = Suggestion::render(
+            2,
+            CallArguments {
+                pages: Some("2,4-6".to_string()),
+                detail: Some(Detail::High),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            render.command(&target),
+            "gridity render doc.pdf --pages 2,4-6 --detail high --type pdf --preset hires --password-file pw.txt"
+        );
+        assert_eq!(
+            render.call(&target),
+            SuggestedCall {
+                tool: Tool::Render,
+                arguments: CallArguments {
+                    inputs: Some(vec!["doc.pdf".to_string()]),
+                    kind: Some(InputKind::Pdf),
+                    pages: Some("2,4-6".to_string()),
+                    preset: Some(Preset::Hires),
+                    detail: Some(Detail::High),
+                    password_file: Some("pw.txt".to_string()),
+                    ..Default::default()
+                },
+            }
+        );
+
+        let text = Suggestion::new(Tool::Text, CallArguments::default());
+        assert_eq!(
+            text.command(&target),
+            "gridity text doc.pdf --password-file pw.txt"
+        );
+        assert_eq!(
+            serde_json::to_value(text.call(&target)).unwrap(),
+            serde_json::json!({
+                "tool": "text",
+                "arguments": { "input": "doc.pdf", "password_file": "pw.txt" }
+            })
+        );
+
+        let probe = Suggestion::new(
+            Tool::Probe,
+            CallArguments {
+                per_page: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            probe.command(&target),
+            "gridity probe doc.pdf --type pdf --preset hires --password-file pw.txt --per-page"
+        );
+        assert_eq!(probe.call(&target).arguments.per_page, Some(true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn calls_keep_paths_unquoted() {
+        let target = Target {
+            inputs: vec!["my shots".to_string(), "it's.png".to_string()],
+            ..target("")
+        };
+        let render = Suggestion::render(1, CallArguments::default());
+        assert_eq!(
+            render.command(&target),
+            "gridity render 'my shots' 'it'\\''s.png'"
+        );
+        assert_eq!(
+            render.call(&target).arguments.inputs.unwrap(),
+            ["my shots", "it's.png"]
+        );
     }
 
     #[cfg(windows)]
