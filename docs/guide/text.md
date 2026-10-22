@@ -81,5 +81,8 @@ the body text size in pixels for each `--detail` (see `gridity guide layout`, "S
 }
 ```
 
+Over MCP, `text` returns only the pages that fit in `max_chars` and adds `next_pages`, the
+selected pages it left out (see `gridity guide mcp`). The CLI always prints every page.
+
 `probe --per-page --json` has the same fields (without `text`) in `pages`, plus
 `body_text_pt` and, per estimate, `body_text_px`.

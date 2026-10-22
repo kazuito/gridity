@@ -1569,3 +1569,85 @@ fn mcp_server_survives_bad_lines_and_answers_batches() {
     assert_eq!(responses[1]["result"], serde_json::json!({}));
     assert_eq!(responses[2][0]["id"], 2);
 }
+
+/// Sends `{method, params}` messages to `gridity mcp` and returns each `result`.
+fn mcp_calls(calls: &[Value]) -> Vec<Value> {
+    let stdin: String = calls
+        .iter()
+        .enumerate()
+        .map(|(id, call)| {
+            let message = serde_json::json!({"jsonrpc": "2.0", "id": id,
+                "method": call["method"], "params": call["params"]});
+            format!("{message}\n")
+        })
+        .collect();
+    let output = gridity().arg("mcp").write_stdin(stdin).output().unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["result"].clone())
+        .collect()
+}
+
+fn mcp_text(arguments: Value) -> Value {
+    serde_json::json!({"method": "tools/call", "params": {"name": "text", "arguments": arguments}})
+}
+
+fn returned_pages(result: &Value) -> Vec<u64> {
+    result["structuredContent"]["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["page"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn mcp_text_returns_the_pages_that_fit_and_names_the_rest() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf_pages(&pdf, &vec![(595, 842, 0, text_page(40)); 6]);
+    let results = mcp_calls(&[
+        serde_json::json!({"method": "tools/list"}),
+        mcp_text(serde_json::json!({"input": s(&pdf), "pages": "2-6", "max_chars": 3000})),
+        mcp_text(serde_json::json!({"input": s(&pdf)})),
+        mcp_text(serde_json::json!({"input": s(&pdf), "pages": "1", "max_chars": 1000})),
+    ]);
+
+    let text_tool = &results[0]["tools"][2];
+    assert_eq!(text_tool["name"], "text");
+    assert_eq!(text_tool["_meta"]["anthropic/maxResultSizeChars"], 500_000);
+
+    let first = &results[1];
+    assert_eq!(first["isError"], false);
+    assert_eq!(returned_pages(first), [2, 3]);
+    let next = first["structuredContent"]["next_pages"].as_str().unwrap();
+    assert_eq!(next, "4-6");
+    let summary = first["content"][0]["text"].as_str().unwrap();
+    let summary = summary.lines().next().unwrap();
+    assert!(
+        summary.contains("2 of 5 selected pages (p.2-3)"),
+        "{summary}"
+    );
+    assert!(summary.contains("pages: \"4-6\""), "{summary}");
+
+    let all = &results[2];
+    assert_eq!(returned_pages(all), [1, 2, 3, 4, 5, 6]);
+    assert!(all["structuredContent"].get("next_pages").is_none());
+
+    let oversized = &results[3];
+    assert_eq!(returned_pages(oversized), [1]);
+    assert!(
+        oversized["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("more than max_chars 1000, and is returned whole")
+    );
+
+    let rest = mcp_calls(&[mcp_text(
+        serde_json::json!({"input": s(&pdf), "pages": next}),
+    )]);
+    assert_eq!(returned_pages(&rest[0]), [4, 5, 6]);
+    assert!(rest[0]["structuredContent"].get("next_pages").is_none());
+}

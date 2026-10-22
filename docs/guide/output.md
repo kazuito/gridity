@@ -69,6 +69,13 @@ raises it. JSON Schemas for all four documents are in the repository under
 `docs/schema/` (`render.schema.json`, `probe.schema.json`, `text.schema.json`,
 `error.schema.json`).
 
+## Text JSON (`gridity text --json`)
+
+- `source`: as above; `pages`: per page `page`, the analysis fields of `gridity guide text`
+  and `text`.
+- `next_pages` (MCP `text` tool only, when pages were left out to fit `max_chars`): the
+  remaining selected pages as a page list, e.g. `"15-50"`; pass it as `pages` to read on.
+
 ## Probe JSON (`gridity probe --json`)
 
 - `source`: as above, plus `page_sizes` (PDF) or `files` (images).
@@ -114,7 +121,7 @@ gets:
 | Reason | Kind | Meaning |
 |---|---|---|
 | `invalid_argument` | usage | unknown flag, missing value, conflicting flags, mixed inputs |
-| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file) |
+| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file, MCP `max_chars`) |
 | `page_out_of_range` | usage | `--pages` beyond the last page |
 | `flag_not_for_input` | usage | a flag for another input type (`--pages` on a video) |
 | `label_variable_not_for_input` | usage | a `--label` variable the input type does not have |

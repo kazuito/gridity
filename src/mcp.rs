@@ -102,7 +102,17 @@ struct TextParams {
     /// Pages, 1-based: "1-3,5,10-".
     pages: Option<String>,
     password_file: Option<String>,
+    /// Characters of page JSON in the result (default 40000). Pages beyond it are left out
+    /// and named in next_pages.
+    #[schemars(range(min = MIN_TEXT_CHARS, max = MAX_TEXT_CHARS))]
+    max_chars: Option<usize>,
 }
+
+/// About 10K tokens of Latin text, under the 50K characters Claude Code keeps inline.
+const DEFAULT_TEXT_CHARS: usize = 40_000;
+const MIN_TEXT_CHARS: usize = 1_000;
+/// Leaves room for the summary and source under `MAX_INLINE_TEXT_CHARS`.
+const MAX_TEXT_CHARS: usize = 400_000;
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -294,21 +304,58 @@ impl Server {
     }
 
     fn text(&self, p: TextParams) -> Result<Value> {
+        let max_chars = p.max_chars.unwrap_or(DEFAULT_TEXT_CHARS);
+        if !(MIN_TEXT_CHARS..=MAX_TEXT_CHARS).contains(&max_chars) {
+            return Err(usage(
+                Reason::InvalidValue,
+                format!("max_chars {max_chars} is out of range"),
+            )
+            .with_hint(format!(
+                "use max_chars within {MIN_TEXT_CHARS}-{MAX_TEXT_CHARS} (default {DEFAULT_TEXT_CHARS})"
+            ))
+            .into());
+        }
         let mut argv = Argv::new("text");
         argv.value("pages", p.pages);
         argv.value("password-file", self.password_file(p.password_file)?);
         let Command::Text(args) = argv.parse(self.inputs(vec![p.input])?)? else {
             unreachable!("argv starts with text")
         };
-        let report: TextReport = crate::extract::report(args)?;
+        let mut report: TextReport = crate::extract::report(args)?;
         let visual = report.visual_pages();
-        let summary = if visual.is_empty() {
+        let selected = report.pages.len();
+        let kept_chars = report.fit(max_chars)?;
+        let returned: Vec<usize> = report.pages.iter().map(|p| p.page).collect();
+        let returned = crate::render::compact_ranges(&returned);
+        let mut notes = Vec::new();
+        if kept_chars > max_chars {
+            notes.push(format!(
+                "p.{returned} alone has {kept_chars} characters, more than max_chars {max_chars}, \
+                 and is returned whole"
+            ));
+        }
+        if let Some(next) = &report.next_pages {
+            notes.push(format!(
+                "returned {} of {selected} selected pages (p.{returned}); call text again with \
+                 pages: \"{next}\" for the rest, or raise max_chars",
+                report.pages.len()
+            ));
+        }
+        if !visual.is_empty() {
+            let scope = if report.next_pages.is_some() {
+                "of all selected pages, "
+            } else {
+                ""
+            };
+            notes.push(format!(
+                "{scope}p.{} show formulas, figures or text that extraction cannot capture, render them",
+                crate::render::compact_ranges(&visual)
+            ));
+        }
+        let summary = if notes.is_empty() {
             "page text:".to_string()
         } else {
-            format!(
-                "page text; p.{} show formulas, figures or text that extraction cannot capture, render them:",
-                crate::render::compact_ranges(&visual)
-            )
+            format!("page text; {}:", notes.join("; "))
         };
         Ok(success(&report, &summary, Vec::new()))
     }
@@ -524,22 +571,24 @@ fn tools() -> Vec<Value> {
             Some(schema_for!(Manifest)),
             json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }),
         ),
-        tool(
+        large_text(tool(
             "probe",
             "Page count, duration, resolution and sheet estimates for an input; with per_page, \
              which PDF pages need to be seen as images. Returns suggested render commands.",
             schema_for!(ProbeParams),
             Some(schema_for!(ProbeReport)),
             read_only.clone(),
-        ),
-        tool(
+        )),
+        large_text(tool(
             "text",
             "Visible text of PDF pages with each page's content type. Reading text costs far \
-             fewer tokens than images; render pages marked mixed or graphics.",
+             fewer tokens than images; render pages marked mixed or graphics. Returns the \
+             leading pages that fit in max_chars (default 40000) and names the rest in \
+             next_pages; call again with pages: next_pages to read on.",
             schema_for!(TextParams),
             Some(schema_for!(TextReport)),
             read_only.clone(),
-        ),
+        )),
         tool(
             "guide",
             "gridity documentation in Markdown: options, recipes, output schema.",
@@ -566,6 +615,18 @@ fn tool(
     if let Some(output) = output {
         tool["outputSchema"] = output.into();
     }
+    tool
+}
+
+/// Claude Code saves a text result over 50,000 characters to a file unless the tool declares
+/// a larger limit, up to this one.
+/// https://code.claude.com/docs/en/env-vars (MAX_MCP_OUTPUT_TOKENS), checked 2026-10-22.
+const MAX_INLINE_TEXT_CHARS: usize = 500_000;
+
+/// Keeps long text results (`text` up to `max_chars`, `probe` with `per_page` on long PDFs)
+/// in the conversation in Claude Code.
+fn large_text(mut tool: Value) -> Value {
+    tool["_meta"] = json!({ "anthropic/maxResultSizeChars": MAX_INLINE_TEXT_CHARS });
     tool
 }
 
@@ -729,5 +790,29 @@ mod tests {
         let (_, document) = text.split_once('\n').unwrap();
         assert_eq!(document, r#"{"schema_version":1,"alpha":2}"#);
         assert_eq!(result["structuredContent"]["alpha"], 2);
+    }
+
+    #[test]
+    fn text_results_stay_inline_within_max_chars() {
+        let tools = tools();
+        let text = &tools[2];
+        assert_eq!(text["_meta"]["anthropic/maxResultSizeChars"], 500_000);
+        let max_chars = &text["inputSchema"]["properties"]["max_chars"];
+        assert_eq!(max_chars["minimum"], MIN_TEXT_CHARS);
+        assert_eq!(max_chars["maximum"], MAX_TEXT_CHARS);
+        const { assert!(MAX_TEXT_CHARS < MAX_INLINE_TEXT_CHARS) };
+        assert!(tools[3].get("_meta").is_none());
+
+        let response = server().handle_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"text","arguments":{"input":"x.pdf","max_chars":999}}}"#,
+        );
+        let result = &response.unwrap()["result"];
+        assert_eq!(result["isError"], true);
+        let message = result["content"][0]["text"].as_str().unwrap();
+        assert!(message.contains("reason: invalid_value"), "{message}");
+        assert!(
+            message.contains("max_chars within 1000-400000"),
+            "{message}"
+        );
     }
 }

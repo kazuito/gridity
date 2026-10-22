@@ -46,6 +46,14 @@ The JSON document (manifest or report) is both the first text block of the resul
 
 - `render` writes at most 4 sheets per call unless `max_sheets` is given, and refuses to
   return more than 20 MB of images (base64) in one result: narrow `pages` or the time range.
+- `text` returns the leading selected pages whose JSON fits in `max_chars` characters
+  (default 40000, about 10K tokens of English; 1000-400000), and always at least one page.
+  The pages left out are in `next_pages` (e.g. `"15-50"`), and the summary line says which
+  pages came back: call `text` again with `pages` set to `next_pages` to read on, or raise
+  `max_chars`. The formula/figure hint covers all selected pages, including the ones not
+  returned yet.
+- `text` and `probe` declare `anthropic/maxResultSizeChars` (500000), so Claude Code keeps
+  their results inline instead of saving results over 50000 characters to a file.
 - Sheets are also written to the default private output directory, as with the CLI.
 - Passwords are not tool parameters, so they stay out of the conversation. Start the
   server with `GRIDITY_PDF_PASSWORD` set, or pass `password_file` (a path, not `-`).

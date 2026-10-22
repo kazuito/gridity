@@ -4,6 +4,13 @@
   "description": "`text --json`.",
   "type": "object",
   "properties": {
+    "next_pages": {
+      "description": "Selected pages left out to keep the MCP result within `max_chars`; pass them as\n`pages` to read on. Never set by the CLI.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "pages": {
       "type": "array",
       "items": {
