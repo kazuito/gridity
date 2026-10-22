@@ -22,7 +22,8 @@ evenly across sheets when they do not fit on one.
 ## Install
 
 ```sh
-cargo install --path .
+npx gridity --help             # prebuilt: macOS and Linux (x64, arm64), Windows (x64)
+cargo install gridity          # build from source with Rust
 ```
 
 Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
@@ -34,7 +35,8 @@ Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
 tools; `render` returns the sheets as images.
 
 ```sh
-claude mcp add gridity -- gridity mcp
+claude mcp add gridity -- gridity mcp             # installed gridity
+claude mcp add gridity -- npx -y gridity mcp      # without installing
 ```
 
 See `gridity guide mcp` for other clients, parameters and limits.

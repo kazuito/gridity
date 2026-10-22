@@ -1,0 +1,19 @@
+{
+  "name": "gridity",
+  "version": "0.0.0",
+  "description": "Arrange PDF pages, video frames and images into labeled grid sheets for LLM vision",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kazuito/gridity.git"
+  },
+  "homepage": "https://github.com/kazuito/gridity",
+  "keywords": ["pdf", "video", "grid", "llm", "contact-sheet", "mcp"],
+  "bin": {
+    "gridity": "bin/gridity.js"
+  },
+  "files": ["bin", "vendor", "LICENSE-MIT", "LICENSE-APACHE", "OFL.txt"],
+  "engines": {
+    "node": ">=18"
+  }
+}

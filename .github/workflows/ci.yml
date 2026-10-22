@@ -67,6 +67,23 @@ jobs:
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - run: cargo check --all-targets --locked
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - run: cargo publish --dry-run --locked
+      - name: npm package runs the host binary
+        run: |
+          cargo build --release --locked
+          mkdir -p bins/x86_64-unknown-linux-musl
+          cp target/release/gridity bins/x86_64-unknown-linux-musl/
+          node packaging/npm/build.mjs bins npm-package
+          node npm-package/bin/gridity.js --version
+
   deny:
     runs-on: ubuntu-latest
     steps:

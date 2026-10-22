@@ -59,6 +59,10 @@ src/
 docs/guide/      user/agent documentation embedded into the binary
 tests/cli.rs     integration tests; fixtures are generated in temp dirs
 tests/fixtures/  committed fixtures that cannot be generated in Rust (encrypted.pdf)
+docs/schema/     JSON Schemas generated from the output structs (see "JSON is versioned")
+packaging/npm/   npm package: Node launcher + build.mjs that bundles the prebuilt binaries
+.github/         CI (ci.yml) and tag-triggered releases to crates.io and npm (release.yml;
+                 steps in RELEASING.md)
 samples/         committed inputs for visual review; render.sh writes samples/out/ (gitignored)
 assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 ```
@@ -178,7 +182,10 @@ so the compat preset gives PDF 9/4/2, video 16/12/6 and images 12/6/3 items per 
 
 ## Testing
 
-- Unit tests live next to the code (`#[cfg(test)] mod tests`).
+- Unit tests live next to the code (`#[cfg(test)] mod tests`). Parsers and other code that
+  takes untrusted bytes or strings also have `proptest` properties there (never panic,
+  results in range); extend them when adding such code. cargo-fuzz would need a library
+  target, which gridity does not have yet.
 - Integration tests in `tests/cli.rs` generate their fixtures: `write_pdf` (a minimal
   PDF writer with page sizes and rotation), `write_png`, `write_exif_jpeg`, `write_gif`,
   and `write_video` (ffmpeg `testsrc`). Prefer extending these over committing binaries.
