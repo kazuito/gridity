@@ -10,7 +10,7 @@ homepage = "https://github.com/kazuito/gridity"
 readme = "README.md"
 keywords = ["pdf", "video", "grid", "llm", "contact-sheet"]
 categories = ["command-line-utilities", "multimedia::images", "multimedia::video"]
-exclude = ["samples/", ".claude/", ".github/", "packaging/"]
+include = ["/src/", "/assets/fonts/", "/docs/", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
 [dependencies]
 ab_glyph = "0.2"
