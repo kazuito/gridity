@@ -56,7 +56,12 @@ Adds the same analysis for every page to `probe`, and turns the suggested comman
 plan: `gridity text` for the whole file (when it has extractable text),
 `gridity render --pages ...` for the `mixed` and `graphics` pages at the lowest detail that
 keeps the body text at 8 px or more on those sheets, and a close-up for pages whose small
-text (captions, subscripts) would fall below 6 px.
+text (captions, subscripts) would fall below 6 px. Commands that need more than 10 sheets
+include `--max-sheets`.
+
+The content types, sizes and suggestions are heuristics. Treat them as a starting point:
+look at the sheets and zoom in (`--detail high`, `--per-sheet 1`, `--crop`) where text is
+still too small.
 
 Without `--per-page`, `probe` measures up to 8 pages spread over the document to report
 the body text size in pixels for each `--detail` (see `gridity guide layout`, "Scale").

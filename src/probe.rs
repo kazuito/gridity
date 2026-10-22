@@ -41,7 +41,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         (Source::Pdf(pdf), Some(visual)) if !visual.is_empty() => Some(
             visual
                 .iter()
-                .map(|&page| page_shape(pdf.page_sizes[page - 1]))
+                .map(|(page, _)| page_shape(pdf.page_sizes[page - 1]))
                 .collect(),
         ),
         _ => None,
@@ -103,7 +103,10 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print_text(&source, &info, args.preset, &estimates, body_pt, per_page);
-        println!("suggested commands ({} input):", kind_name(source.kind()));
+        println!(
+            "suggested commands ({} input; heuristic starting points, adjust after looking at the sheets):",
+            kind_name(source.kind())
+        );
         for s in &suggestions {
             println!("  {s}");
         }
@@ -136,11 +139,10 @@ fn sheet_scale(layout: &Layout, count: usize, shapes: &[Shape]) -> Result<f64> {
 }
 
 /// Pages worth rendering: those with figures, formulas or text that cannot be extracted.
-fn visual_pages(pages: &[(usize, PageSummary)]) -> Vec<usize> {
+fn visual_pages(pages: &[(usize, PageSummary)]) -> Vec<&(usize, PageSummary)> {
     pages
         .iter()
         .filter(|(_, s)| matches!(s.content, Content::Mixed | Content::Graphics))
-        .map(|(page, _)| *page)
         .collect()
 }
 
@@ -255,49 +257,47 @@ fn suggestions(
     match source {
         Source::Pdf(pdf) => {
             let detail = readable_detail(estimates, body_pt);
-            let flag = match detail {
-                1 => String::new(),
-                d => format!(" --detail {}", DETAILS[d].1),
-            };
             if body_pt.is_some() {
                 list.push(format!("gridity text {input}"));
             }
             match pages {
                 Some(pages) => {
                     let visual = visual_pages(pages);
-                    if !visual.is_empty() {
-                        let count = visual.len().div_ceil(per_sheet(detail));
-                        let max = if count > 10 {
-                            format!(" --max-sheets {count}")
-                        } else {
-                            String::new()
-                        };
-                        list.push(format!(
-                            "gridity render {input} --pages {}{flag}{max}",
-                            compact_ranges(&visual)
-                        ));
+                    if visual.is_empty() {
+                        return list;
                     }
-                    let scale = estimates[detail]["visual_scale"].as_f64().unwrap_or(1.0);
-                    let tiny: Vec<usize> = pages
+                    let numbers: Vec<usize> = visual.iter().map(|(page, _)| *page).collect();
+                    list.push(format!(
+                        "gridity render {input} --pages {}{}{}",
+                        compact_ranges(&numbers),
+                        detail_flag(detail),
+                        max_sheets(numbers.len().div_ceil(per_sheet(detail)))
+                    ));
+                    let scale = visual_scale(estimates, detail);
+                    let close: Vec<usize> = visual
                         .iter()
-                        .filter(|(_, s)| {
-                            s.content != Content::Text
-                                && s.small_pt.is_some_and(|pt| pt * scale < SKIMMABLE_PX)
-                        })
+                        .filter(|(_, s)| s.small_pt.is_some_and(|pt| pt * scale < SKIMMABLE_PX))
                         .map(|(page, _)| *page)
                         .collect();
-                    match tiny.as_slice() {
+                    match close.as_slice() {
                         [] => {}
                         [page] => list.push(format!(
                             "gridity render {input} --pages {page} --per-sheet 1"
                         )),
+                        _ if detail + 1 < DETAILS.len() => list.push(format!(
+                            "gridity render {input} --pages {} --detail high{}",
+                            compact_ranges(&close),
+                            max_sheets(close.len().div_ceil(per_sheet(DETAILS.len() - 1)))
+                        )),
                         _ => list.push(format!(
-                            "gridity render {input} --pages {} --detail high",
-                            compact_ranges(&tiny)
+                            "gridity render {input} --pages {} --per-sheet 1{}",
+                            compact_ranges(&close),
+                            max_sheets(close.len())
                         )),
                     }
                 }
                 None => {
+                    let flag = detail_flag(detail);
                     if sheets(detail) <= 10 {
                         list.push(format!("gridity render {input}{flag}"));
                     } else {
@@ -347,13 +347,33 @@ fn readable_detail(estimates: &[Value], body_pt: Option<f64>) -> usize {
     let Some(body) = body_pt else {
         return 1;
     };
-    estimates
-        .iter()
-        .position(|e| {
-            let scale = e["visual_scale"].as_f64().or(e["scale"].as_f64());
-            scale.is_some_and(|scale| body * scale >= READABLE_PX)
-        })
+    (0..DETAILS.len())
+        .find(|&detail| body * visual_scale(estimates, detail) >= READABLE_PX)
         .unwrap_or(DETAILS.len() - 1)
+}
+
+fn visual_scale(estimates: &[Value], detail: usize) -> f64 {
+    let estimate = &estimates[detail];
+    estimate["visual_scale"]
+        .as_f64()
+        .or(estimate["scale"].as_f64())
+        .unwrap_or(1.0)
+}
+
+/// `--max-sheets` for renders that need more sheets than the default limit of 10.
+fn max_sheets(count: usize) -> String {
+    if count > 10 {
+        format!(" --max-sheets {count}")
+    } else {
+        String::new()
+    }
+}
+
+fn detail_flag(detail: usize) -> String {
+    match detail {
+        1 => String::new(),
+        d => format!(" --detail {}", DETAILS[d].1),
+    }
 }
 
 fn nice_step(seconds: f64) -> u64 {

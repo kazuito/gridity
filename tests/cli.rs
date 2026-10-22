@@ -366,6 +366,32 @@ fn text_marks_scripts() {
 }
 
 #[test]
+fn suggested_close_ups_render_for_papers_with_footnotes() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("paper.pdf");
+    let page = format!(
+        "{}BT /F1 4 Tf 50 30 Td (footnote set in very small type, forty chars) Tj ET\n\
+         0 0 1 rg 50 50 400 300 re f\n",
+        formula_page(11, 6)
+    );
+    write_pdf_pages(&pdf, &vec![(595, 842, 0, page); 24]);
+
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    let renders: Vec<&str> = probe["suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .filter(|s| s.starts_with("gridity render"))
+        .collect();
+    assert!(renders.len() >= 2, "{renders:?}");
+    for render in renders {
+        let args: Vec<&str> = render.split_whitespace().skip(1).collect();
+        gridity().args(&args).arg("--dry-run").assert().success();
+    }
+}
+
+#[test]
 fn probe_per_page_suggests_text_and_visual_pages() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");

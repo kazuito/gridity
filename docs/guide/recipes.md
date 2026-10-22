@@ -10,9 +10,10 @@ gridity render report.pdf --pages 9 --crop 0,0.5,1,0.5  # close-up of a small pa
 ```
 
 `probe --per-page` suggests these commands for the file: the `--pages` list holds the
-`mixed` and `graphics` pages, and the detail is the lowest one that keeps the body text at
-8 px or more. Slides with large text usually fit at `--detail low`; papers with 10–11pt
-text need `medium` or more.
+`mixed` and `graphics` pages, the detail is the lowest one that keeps the body text at 8 px
+or more, and pages whose small text stays below 6 px get a close-up. Slides with large text
+usually fit at `--detail low`; papers with 10–11pt text need `medium` or more. The
+suggestions are a starting point: check the sheets and zoom in where needed.
 
 ## Skim a whole PDF
 
