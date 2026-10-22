@@ -20,7 +20,13 @@ limits. Read one sheet instead of taking many screenshots.
 2. PDFs: `gridity text report.pdf` — read text pages as text; it costs far fewer tokens.
 3. `gridity render report.pdf --pages ...` — render the pages or frames that need to be
    seen, and read the printed paths with your image viewer tool.
-4. Zoom in where needed: `--pages 7 --detail high`, or `--crop` for part of a page.
+4. Zoom in where needed: `--pages 7 --detail high`, or `--crop X,Y,W,H` (fractions of
+   the page) for part of it, e.g. `--pages 7 --crop 0,0.5,1,0.5` for the bottom half.
+
+`probe`'s content types, text sizes and suggested commands are heuristics. Use them as a
+starting point, look at the sheets, and adjust `--detail`, `--pages` or `--crop` when text
+is too small or a page was misjudged. Text extracted from formulas can be wrong in ways
+that change their meaning; read formulas from the page images.
 
 ## Output contract
 
