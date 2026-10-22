@@ -345,7 +345,11 @@ fn check_flags(kind: InputKind, args: &RenderArgs) -> Result<(), CliError> {
     let sel = &args.selection;
     let pdf_only = [
         ("--pages", sel.pages.is_some()),
-        ("--password", args.source.password.is_some()),
+        ("--password", args.source.password.password.is_some()),
+        (
+            "--password-file",
+            args.source.password.password_file.is_some(),
+        ),
     ];
     let time_only = [
         ("--start", sel.start.is_some()),

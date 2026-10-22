@@ -41,7 +41,7 @@ that change their meaning; read formulas from the page images.
 ## Topics
 
 - `gridity guide recipes` — task-oriented examples
-- `gridity guide pdf` — page selection, passwords
+- `gridity guide pdf` — page selection, passwords (`--password-file`, `GRIDITY_PDF_PASSWORD`)
 - `gridity guide text` — text extraction and page analysis for PDFs
 - `gridity guide video` — time ranges, sampling, GIF/APNG
 - `gridity guide images` — files and directories

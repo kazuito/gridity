@@ -6,7 +6,7 @@ that are plain text, and render only the pages that need to be seen.
 ## `gridity text`
 
 ```sh
-gridity text file.pdf [--pages LIST] [--password PW] [--json]
+gridity text file.pdf [--pages LIST] [--password-file PATH] [--json]
 ```
 
 Prints the text that is visible on each page, one block per page:

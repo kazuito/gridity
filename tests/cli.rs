@@ -1204,3 +1204,63 @@ fn encrypted_pdf_needs_the_password() {
     ]);
     assert_eq!(manifest["source"]["pages"], 1);
 }
+
+#[test]
+fn passwords_come_from_a_file_stdin_or_the_environment() {
+    let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/encrypted.pdf");
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("pw.txt");
+    std::fs::write(&file, "secret\n").unwrap();
+    let pages = |cmd: &mut Command| {
+        let output = cmd.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["source"]["pages"].clone()
+    };
+
+    let mut cmd = gridity();
+    cmd.args([
+        "render",
+        s(&pdf),
+        "--dry-run",
+        "--json",
+        "--password-file",
+        s(&file),
+    ]);
+    assert_eq!(pages(&mut cmd), 1);
+
+    let mut cmd = gridity();
+    cmd.args(["text", s(&pdf), "--json", "--password-file", "-"])
+        .write_stdin("secret\r\n");
+    assert_eq!(pages(&mut cmd), 1);
+
+    let mut cmd = gridity();
+    cmd.args(["probe", s(&pdf), "--json"])
+        .env("GRIDITY_PDF_PASSWORD", "secret");
+    assert_eq!(pages(&mut cmd), 1);
+
+    gridity()
+        .args(["render", s(&pdf), "--dry-run"])
+        .env("GRIDITY_PDF_PASSWORD", "wrong")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("incorrect"));
+    gridity()
+        .args([
+            "render",
+            s(&pdf),
+            "--password",
+            "secret",
+            "--password-file",
+            s(&file),
+        ])
+        .assert()
+        .code(2);
+
+    let png = dir.path().join("a.png");
+    write_png(&png, 40, 30, 100);
+    gridity()
+        .args(["render", s(&png), "--dry-run", "--password-file", s(&file)])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--password-file"));
+}

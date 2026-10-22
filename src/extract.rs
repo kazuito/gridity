@@ -9,7 +9,7 @@ use crate::probe::quote;
 use crate::render::{compact_ranges, source_info};
 use crate::select::parse_pages;
 use crate::source::Source;
-use crate::source::pdf::PdfSource;
+use crate::source::pdf::{PdfSource, resolve_password};
 
 #[derive(Serialize)]
 struct PageText {
@@ -25,7 +25,7 @@ pub fn run(args: TextArgs) -> Result<()> {
             .with_hint("gridity text reads PDFs only; use gridity render for other inputs")
             .into());
     }
-    let pdf = PdfSource::open(&args.input, args.password.as_deref())?;
+    let pdf = PdfSource::open(&args.input, resolve_password(&args.password)?.as_deref())?;
     let pages = match &args.pages {
         Some(spec) => parse_pages(spec, pdf.page_count())?,
         None => (1..=pdf.page_count()).collect(),

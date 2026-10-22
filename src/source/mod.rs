@@ -60,7 +60,7 @@ impl Source {
         Ok(match kind {
             InputKind::Pdf => Source::Pdf(pdf::PdfSource::open(
                 single(inputs),
-                args.password.as_deref(),
+                pdf::resolve_password(&args.password)?.as_deref(),
             )?),
             InputKind::Video => Source::Video(video::VideoSource::open(
                 single(inputs),

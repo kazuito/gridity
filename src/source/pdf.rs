@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +20,8 @@ use image::RgbaImage;
 use rayon::prelude::*;
 
 use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
-use crate::error::{CliError, input};
+use crate::cli::PasswordArgs;
+use crate::error::{CliError, input, usage};
 use crate::pagetext::{BBox, Glyph, PageScan};
 use crate::select::Crop;
 
@@ -122,10 +124,66 @@ impl PdfSource {
     }
 }
 
+/// Environment variable read when neither `--password` nor `--password-file` is given.
+pub const PASSWORD_ENV: &str = "GRIDITY_PDF_PASSWORD";
+const MAX_PASSWORD_FILE_BYTES: u64 = 4096;
+
+/// The password from `--password`, `--password-file` or `GRIDITY_PDF_PASSWORD`, in that order.
+pub fn resolve_password(args: &PasswordArgs) -> Result<Option<String>> {
+    if let Some(password) = &args.password {
+        return Ok(Some(password.clone()));
+    }
+    if let Some(path) = &args.password_file {
+        return read_password_file(path).map(Some);
+    }
+    match std::env::var(PASSWORD_ENV) {
+        Ok(password) if !password.is_empty() => Ok(Some(password)),
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(usage(format!("{PASSWORD_ENV} is not valid UTF-8")).into())
+        }
+    }
+}
+
+/// Reads a password file (or stdin for "-"), dropping one trailing line break.
+fn read_password_file(path: &Path) -> Result<String> {
+    let mut bytes = Vec::new();
+    let read = if path == Path::new("-") {
+        std::io::stdin()
+            .take(MAX_PASSWORD_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+    } else {
+        std::fs::File::open(path)
+            .and_then(|f| f.take(MAX_PASSWORD_FILE_BYTES + 1).read_to_end(&mut bytes))
+    };
+    read.map_err(|e| {
+        input(format!(
+            "cannot read the password file {}: {e}",
+            path.display()
+        ))
+    })?;
+    if bytes.len() as u64 > MAX_PASSWORD_FILE_BYTES {
+        return Err(usage(format!(
+            "the password file {} is larger than {MAX_PASSWORD_FILE_BYTES} bytes",
+            path.display()
+        ))
+        .into());
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| usage(format!("the password file {} is not UTF-8", path.display())))?;
+    let password = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .unwrap_or(&text);
+    Ok(password.to_string())
+}
+
 fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
     Pdf::new_with_password(data.clone(), password).map_err(|e| match e {
         LoadPdfError::Decryption(DecryptionError::PasswordProtected) if password.is_empty() => {
-            input("the PDF is password-protected").with_hint("pass --password <PASSWORD>")
+            input("the PDF is password-protected").with_hint(format!(
+                "pass --password-file <FILE> or set {PASSWORD_ENV}; avoid --password, which other processes can see"
+            ))
         }
         LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
             input("the PDF password is incorrect")

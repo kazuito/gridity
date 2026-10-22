@@ -1,7 +1,7 @@
 # PDF input
 
 ```sh
-gridity render file.pdf [--pages LIST] [--password PW] [layout and style options]
+gridity render file.pdf [--pages LIST] [--password-file PATH] [layout and style options]
 ```
 
 ## Page selection
@@ -37,7 +37,18 @@ commands. See `gridity guide text`.
 
 ## Encrypted PDFs
 
-Password-protected files fail with exit 3 and the hint `pass --password <PASSWORD>`.
+Password-protected files fail with exit 3 and a hint. Give the password one of these ways
+(`--password` wins over `--password-file`, which wins over the environment):
+
+| Option | Notes |
+|---|---|
+| `--password-file PATH` | the file content without its final line break; `-` reads stdin |
+| `GRIDITY_PDF_PASSWORD` | environment variable, used when no option is given |
+| `--password PW` | visible to other processes (`ps`) and kept in shell history |
+
+Agents: do not write the password into the conversation or a command line. Ask the user
+to put it in a file or to set `GRIDITY_PDF_PASSWORD` for you, then pass `--password-file`
+or nothing. The same options work with `probe` and `text`.
 
 ## Limitations
 

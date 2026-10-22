@@ -53,4 +53,4 @@ Frames are laid out at their display size: non-square pixels (SAR) and rotation 
 JPEG by default (`--format png` to change). Undecodable timestamps become gray cells and a
 warning, never a silent gap.
 
-`--pages` and `--password` are rejected for video and animation input.
+`--pages`, `--password` and `--password-file` are rejected for video and animation input.

@@ -154,13 +154,29 @@ pub struct RenderArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct SourceArgs {
-    /// Password for an encrypted PDF
-    #[arg(long, help_heading = "PDF")]
-    pub password: Option<String>,
+    #[command(flatten)]
+    pub password: PasswordArgs,
 
     /// Path to ffmpeg (or set GRIDITY_FFMPEG); ffprobe is looked up next to it
     #[arg(long, value_name = "PATH", help_heading = "Video")]
     pub ffmpeg: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct PasswordArgs {
+    /// Password for an encrypted PDF. Other processes and the shell history can see it;
+    /// prefer --password-file or GRIDITY_PDF_PASSWORD
+    #[arg(long, value_name = "PW", help_heading = "PDF")]
+    pub password: Option<String>,
+
+    /// Read the PDF password from a file, "-" for stdin [default: $GRIDITY_PDF_PASSWORD]
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "password",
+        help_heading = "PDF"
+    )]
+    pub password_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -339,9 +355,8 @@ pub struct TextArgs {
     #[arg(long, value_name = "LIST")]
     pub pages: Option<String>,
 
-    /// Password for an encrypted PDF
-    #[arg(long)]
-    pub password: Option<String>,
+    #[command(flatten)]
+    pub password: PasswordArgs,
 
     /// Print JSON
     #[arg(long)]
