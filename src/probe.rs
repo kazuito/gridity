@@ -363,7 +363,7 @@ fn nice_step(seconds: f64) -> u64 {
         .unwrap_or(900)
 }
 
-fn quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     if s.chars().all(|c| c.is_alphanumeric() || "-_./".contains(c)) {
         s.to_string()
     } else {

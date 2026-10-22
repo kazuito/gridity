@@ -333,6 +333,38 @@ fn text_prints_visible_text_per_page() {
     assert_eq!(report["pages"].as_array().unwrap().len(), 1);
 }
 
+/// A page of `size` pt text with `count` superscripts: "x^{2}" repeated, as formulas are.
+fn formula_page(size: usize, count: usize) -> String {
+    let mut content = text_page_sized(6, size);
+    for i in 0..count {
+        content.push_str(&format!(
+            "BT 0 Ts /F1 {size} Tf {} 300 Td (x) Tj /F1 {} Tf {} Ts (2) Tj ET\n",
+            50 + i * 4 * size,
+            size * 6 / 10,
+            size * 4 / 10
+        ));
+    }
+    content
+}
+
+#[test]
+fn text_marks_scripts() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf_pages(&pdf, &[(595, 842, 0, formula_page(14, 6))]);
+
+    let output = gridity().args(["text", s(&pdf)]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("x^2"), "{stdout}");
+    assert!(
+        stdout.lines().next().unwrap().contains("formulas"),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("p.1 show formulas"), "{stderr}");
+}
+
 #[test]
 fn probe_per_page_suggests_text_and_visual_pages() {
     let dir = TempDir::new().unwrap();

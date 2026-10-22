@@ -173,7 +173,7 @@ impl PageSummary {
         {
             parts.push(format!("small {}pt", self.small_pt.unwrap_or_default()));
         }
-        if self.scripts >= MIXED_SCRIPTS || self.short_lines >= MIXED_SHORT_LINES {
+        if self.has_formulas() {
             parts.push("formulas".to_string());
         }
         if self.images > 0 {
@@ -190,6 +190,10 @@ impl PageSummary {
             parts.push(format!("unmapped {:.0}%", self.unmapped * 100.0));
         }
         parts.join(" · ")
+    }
+
+    fn has_formulas(&self) -> bool {
+        self.scripts >= MIXED_SCRIPTS || self.short_lines >= MIXED_SHORT_LINES
     }
 }
 
@@ -230,41 +234,160 @@ fn coverage(boxes: &[BBox], width: f64, height: f64) -> f64 {
 /// Joins glyphs in drawing order into lines. A glyph off the previous glyph's baseline starts a
 /// new line; a gap along the baseline becomes a space. Works for rotated text too.
 pub fn assemble_text(glyphs: &[Glyph]) -> String {
+    assemble(glyphs, false)
+}
+
+/// Text for reading: `assemble_text` plus `^{…}` / `_{…}` around super- and subscripts and a
+/// slash drawn over a relation composed into one character (`≠`).
+pub fn page_text(glyphs: &[Glyph]) -> String {
+    assemble(glyphs, true)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Script {
+    Sup,
+    Sub,
+}
+
+fn assemble(glyphs: &[Glyph], annotate: bool) -> String {
     let mut out = String::new();
     let mut prev: Option<&Glyph> = None;
-    for glyph in glyphs {
-        let Some(text) = glyph.text.as_deref().filter(|t| !is_private_use(t)) else {
+    // The last glyph on the main baseline, which scripts attach to.
+    let mut base: Option<&Glyph> = None;
+    let mut script: Option<(Script, String)> = None;
+    let mut negate = false;
+    for (i, glyph) in glyphs.iter().enumerate() {
+        if annotate && negates_next(glyph, glyphs.get(i + 1)) {
+            negate = true;
+            continue;
+        }
+        let Some(mut text) = glyph.text.clone().filter(|t| !is_private_use(t)) else {
             continue;
         };
-        if let Some(p) = prev {
-            let (dx, dy) = (p.end.0 - p.start.0, p.end.1 - p.start.1);
-            let len = (dx * dx + dy * dy).sqrt();
-            let (ux, uy) = if len > 0.0 {
-                (dx / len, dy / len)
-            } else {
-                (1.0, 0.0)
-            };
-            let size = p.size.max(glyph.size);
-            let off_x = glyph.start.0 - p.start.0;
-            let off_y = glyph.start.1 - p.start.1;
+        if std::mem::take(&mut negate) {
+            text = negated(&text).unwrap_or_default().to_string();
+        }
+        let kind = match (base, prev) {
+            (Some(base), Some(prev)) if annotate && !text.trim().is_empty() => {
+                script_kind(base, prev, glyph)
+            }
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            match &mut script {
+                Some((current, chars)) if *current == kind => chars.push_str(&text),
+                _ => {
+                    close_script(&mut out, script.take());
+                    script = Some((kind, text));
+                }
+            }
+            prev = Some(glyph);
+            continue;
+        }
+        let reference = if script.is_some() { base } else { prev };
+        close_script(&mut out, script.take());
+        if let (Some(r), Some(p)) = (reference, prev) {
+            let (ux, uy) = direction(r);
+            let off_x = glyph.start.0 - r.start.0;
+            let off_y = glyph.start.1 - r.start.1;
             let across = (off_x * uy - off_y * ux).abs();
             let along = (glyph.start.0 - p.end.0) * ux + (glyph.start.1 - p.end.1) * uy;
-            if across > 0.5 * size || along < -size {
+            let size = p.size.max(glyph.size);
+            if across > 0.5 * r.size.max(glyph.size) || along < -size {
                 out.push('\n');
             } else if along > 0.2 * size && !out.ends_with(char::is_whitespace) && text != " " {
                 out.push(' ');
             }
         }
         if !(text == " " && out.ends_with(char::is_whitespace)) {
-            out.push_str(text);
+            out.push_str(&text);
         }
         prev = Some(glyph);
+        base = Some(glyph);
     }
+    close_script(&mut out, script.take());
     out.lines()
         .map(str::trim_end)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Unit vector along the glyph's baseline.
+fn direction(glyph: &Glyph) -> (f64, f64) {
+    let (dx, dy) = (glyph.end.0 - glyph.start.0, glyph.end.1 - glyph.start.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len > 0.0 {
+        (dx / len, dy / len)
+    } else {
+        (1.0, 0.0)
+    }
+}
+
+/// A smaller glyph right after `prev`, raised or lowered from `base`'s baseline.
+fn script_kind(base: &Glyph, prev: &Glyph, glyph: &Glyph) -> Option<Script> {
+    let (ux, uy) = direction(base);
+    let rise = (glyph.start.0 - base.start.0) * uy - (glyph.start.1 - base.start.1) * ux;
+    let along = (glyph.start.0 - prev.end.0) * ux + (glyph.start.1 - prev.end.1) * uy;
+    let smaller = glyph.size < 0.85 * base.size;
+    let near = along > -base.size && along < 0.5 * base.size;
+    let shifted = (0.1 * base.size..0.6 * base.size).contains(&rise.abs());
+    (smaller && near && shifted).then_some(if rise > 0.0 { Script::Sup } else { Script::Sub })
+}
+
+fn close_script(out: &mut String, script: Option<(Script, String)>) {
+    let Some((kind, chars)) = script else {
+        return;
+    };
+    let chars = chars.trim();
+    out.push(if kind == Script::Sup { '^' } else { '_' });
+    if chars.chars().count() == 1 {
+        out.push_str(chars);
+    } else {
+        out.push_str(&format!("{{{chars}}}"));
+    }
+}
+
+/// A zero-width slash without text (TeX's `\not`) drawn over the next glyph, a relation.
+fn negates_next(glyph: &Glyph, next: Option<&Glyph>) -> bool {
+    let Some(next) = next else {
+        return false;
+    };
+    let slash = matches!(glyph.text.as_deref(), None | Some("\u{338}"));
+    let width = (glyph.end.0 - glyph.start.0).hypot(glyph.end.1 - glyph.start.1);
+    let gap = (next.start.0 - glyph.start.0).hypot(next.start.1 - glyph.start.1);
+    slash
+        && width < 0.05 * glyph.size
+        && gap < 0.5 * glyph.size
+        && next.text.as_deref().and_then(negated).is_some()
+}
+
+fn negated(relation: &str) -> Option<&'static str> {
+    Some(match relation {
+        "=" => "≠",
+        "<" => "≮",
+        ">" => "≯",
+        "≤" => "≰",
+        "≥" => "≱",
+        "∈" => "∉",
+        "∋" => "∌",
+        "≡" => "≢",
+        "∼" | "~" => "≁",
+        "≃" => "≄",
+        "≈" => "≉",
+        "≅" => "≇",
+        "⊂" => "⊄",
+        "⊃" => "⊅",
+        "⊆" => "⊈",
+        "⊇" => "⊉",
+        "∃" => "∄",
+        "|" | "∣" => "∤",
+        "∥" => "∦",
+        "→" => "↛",
+        "⇒" => "⇏",
+        "⇔" => "⇎",
+        _ => return None,
+    })
 }
 
 /// Glyphs noticeably smaller than the glyph before them and shifted off its baseline.
@@ -370,6 +493,64 @@ mod tests {
         let summary = summarize(&page(glyphs));
         assert_eq!(summary.chars, 2);
         assert_eq!(summary.unmapped, 0.25);
+    }
+
+    fn glyph(text: Option<&str>, x: f64, y: f64, size: f64, advance: f64) -> Glyph {
+        Glyph {
+            start: (x, y),
+            end: (x + advance, y),
+            size,
+            text: text.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn page_text_composes_negated_relations() {
+        let slashed = |next: &str| {
+            let glyphs = vec![
+                glyph(Some("a"), 0.0, 10.0, 10.0, 5.0),
+                glyph(None, 8.0, 10.0, 10.0, 0.0),
+                glyph(Some(next), 8.2, 10.0, 10.0, 7.0),
+                glyph(Some("b"), 18.0, 10.0, 10.0, 5.0),
+            ];
+            page_text(&glyphs)
+        };
+        assert_eq!(slashed("="), "a ≠ b");
+        assert_eq!(slashed("∈"), "a ∉ b");
+        assert_eq!(slashed("x"), "a x b");
+    }
+
+    #[test]
+    fn page_text_marks_sub_and_superscripts() {
+        let glyphs = vec![
+            glyph(Some("A"), 0.0, 20.0, 12.0, 8.0),
+            glyph(Some("-"), 8.0, 16.0, 8.0, 4.0),
+            glyph(Some("1"), 12.0, 16.0, 8.0, 4.0),
+            glyph(Some("x"), 16.0, 20.0, 12.0, 6.0),
+            glyph(Some("1"), 22.0, 23.0, 8.0, 4.0),
+            glyph(Some("="), 30.0, 20.0, 12.0, 7.0),
+        ];
+        assert_eq!(page_text(&glyphs), "A^{-1}x_1 =");
+        assert_eq!(assemble_text(&glyphs), "A-1x1 =");
+    }
+
+    #[test]
+    fn page_text_keeps_spaces_after_scripts() {
+        let lowered = vec![
+            glyph(Some("A"), 244.0, 207.6, 28.0, 17.1),
+            glyph(Some("i"), 261.1, 213.6, 19.0, 5.3),
+            glyph(Some("j"), 266.2, 213.6, 19.0, 5.3),
+            glyph(Some("の"), 276.0, 207.6, 22.0, 22.0),
+        ];
+        assert_eq!(page_text(&lowered), "A_{ij} の");
+
+        let spaced = vec![
+            glyph(Some("x"), 0.0, 20.0, 12.0, 6.0),
+            glyph(Some("2"), 6.0, 16.0, 8.0, 4.0),
+            glyph(Some(" "), 10.0, 16.0, 8.0, 2.0),
+            glyph(Some("y"), 12.0, 20.0, 12.0, 6.0),
+        ];
+        assert_eq!(page_text(&spaced), "x^2 y");
     }
 
     #[test]

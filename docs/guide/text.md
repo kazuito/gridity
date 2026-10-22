@@ -22,6 +22,20 @@ cropped-away part of an embedded page) is skipped. Lines follow the drawing orde
 PDF, so multi-column layouts and formulas may come out in a different order than they
 appear.
 
+When pages have formulas, figures or text that cannot be extracted, stderr ends with a hint
+naming them; `gridity probe --per-page` turns them into render commands.
+
+## Formulas and symbols
+
+- Sub- and superscripts are written `x_1`, `a_{ij}`, `A^{-1}`, `(−1)^{i+j}`.
+- A slash drawn over a relation (TeX's `\not`) becomes one character: `≠`, `∉`, `≢`.
+
+Matrices, fractions, roots and large brackets still come out as stacked lines, and
+symbols placed separately (a transpose `t` before a letter, an accent) can land elsewhere.
+Glyphs without a Unicode mapping are dropped, and some fonts map symbols to the wrong
+characters (e.g. `λ` to `l`). Extracted formulas can be wrong in ways that change their
+meaning: on pages marked `formulas`, read the formulas from the rendered page.
+
 ## Content types
 
 | Type | Meaning | What to do |
