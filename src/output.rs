@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -7,10 +7,18 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde::Serialize;
 
 use crate::cli::Format;
+use crate::error::{CliError, ErrorKind};
 use crate::layout::Grid;
 
-/// Anthropic's API rejects images larger than this.
-pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+// Image limits from https://platform.claude.com/docs/en/build-with-claude/vision (checked 2026-10-22).
+/// Amazon Bedrock and Google Cloud reject images whose base64 encoding is larger (the API allows 10 MB).
+pub const MAX_BASE64_BYTES: usize = 5_000_000;
+/// Longest edge allowed for every image of a request that holds more than 20 images.
+pub const MANY_IMAGES_MAX_EDGE: u32 = 2000;
+
+pub fn base64_len(bytes: usize) -> usize {
+    bytes.div_ceil(3) * 4
+}
 
 /// Where sheets are written.
 pub struct Target {
@@ -23,7 +31,7 @@ pub struct Target {
 
 impl Target {
     /// `-o` with an image extension is a file; any other `-o` is a directory.
-    /// Without `-o`, sheets go to `$TMPDIR/gridity/<stem>-<hash>/`.
+    /// Without `-o`, sheets go to `$TMPDIR/gridity-<uid>/<stem>-<hash>/`.
     pub fn resolve(output: Option<&Path>, stem: &str, fingerprint: &str) -> Result<Target> {
         let stem = sanitize(stem);
         let target = match output {
@@ -45,9 +53,7 @@ impl Target {
                 managed: false,
             },
             None => Target {
-                dir: std::env::temp_dir()
-                    .join("gridity")
-                    .join(format!("{stem}-{:08x}", fnv1a(fingerprint) as u32)),
+                dir: default_root().join(format!("{stem}-{:016x}", fnv1a(fingerprint))),
                 base: format!("{stem}.grid"),
                 managed: true,
             },
@@ -67,6 +73,12 @@ impl Target {
     }
 
     pub fn create_dir(&self) -> Result<()> {
+        if self.managed {
+            if let Some(root) = self.dir.parent() {
+                create_private_dir(root)?;
+            }
+            return create_private_dir(&self.dir);
+        }
         std::fs::create_dir_all(&self.dir)
             .with_context(|| format!("failed to create {}", self.dir.display()))
     }
@@ -79,7 +91,11 @@ impl Target {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
         };
-        for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+        let files = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| e.path());
+        for path in files {
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -90,6 +106,73 @@ impl Target {
             }
         }
     }
+}
+
+/// The default output root belongs to the current user, so other users can neither read the
+/// sheets nor plant files or links where gridity writes.
+fn default_root() -> PathBuf {
+    #[cfg(unix)]
+    let name = format!("gridity-{}", current_uid());
+    #[cfg(not(unix))]
+    let name = "gridity".to_string();
+    std::env::temp_dir().join(name)
+}
+
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+            return Err(e).with_context(|| format!("failed to create {}", dir.display()));
+        }
+        _ => {}
+    }
+    let meta = std::fs::symlink_metadata(dir)
+        .with_context(|| format!("failed to inspect {}", dir.display()))?;
+    if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o077 != 0 {
+        return Err(CliError::new(
+            ErrorKind::Runtime,
+            format!(
+                "{} is not a private directory owned by the current user",
+                dir.display()
+            ),
+        )
+        .with_hint("remove it, or pass -o to choose where sheets are written")
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))
+}
+
+/// Writes through a temporary file and a rename: readers never see a half-written sheet, and a
+/// link already at `path` is replaced instead of followed.
+pub fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .and_then(|mut file| file.write_all(data))
+        .and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result.with_context(|| format!("failed to write {}", path.display()))
 }
 
 pub fn format_from_extension(path: &Path) -> Option<Format> {
@@ -225,6 +308,69 @@ mod tests {
                 .ends_with("my_report.grid.png")
         );
         assert!(a.sheet_path(0, 1, Format::Png).is_absolute());
+    }
+
+    #[test]
+    fn default_target_is_per_user_with_full_hash() {
+        let path = Target::resolve(None, "doc", "x")
+            .unwrap()
+            .sheet_path(0, 1, Format::Png);
+        let dir = path.parent().unwrap();
+        let hash = format!("{:016x}", fnv1a("x"));
+        assert_eq!(
+            dir.file_name().unwrap().to_str(),
+            Some(&*format!("doc-{hash}"))
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            dir.parent().unwrap().file_name().unwrap().to_str(),
+            Some(&*format!("gridity-{}", current_uid()))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_replace_links_instead_of_following_them() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let sheet = dir.path().join("doc.grid.png");
+        std::os::unix::fs::symlink(&victim, &sheet).unwrap();
+
+        write_atomic(&sheet, b"sheet").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!std::fs::symlink_metadata(&sheet).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&sheet).unwrap(), b"sheet");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_directories_are_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(create_private_dir(&shared).is_err());
+
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        assert!(create_private_dir(&link).is_err());
+
+        let fresh = dir.path().join("fresh");
+        create_private_dir(&fresh).unwrap();
+        let mode = std::fs::metadata(&fresh).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn base64_size() {
+        assert_eq!(base64_len(0), 0);
+        assert_eq!(base64_len(1), 4);
+        assert_eq!(base64_len(3), 4);
+        assert_eq!(base64_len(3_750_000), 5_000_000);
+        assert_eq!(base64_len(3_750_001), 5_000_004);
     }
 
     #[test]

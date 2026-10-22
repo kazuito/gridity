@@ -4,16 +4,22 @@
 
 | `-o` | Files written |
 |---|---|
-| (none) | `$TMPDIR/gridity/<name>-<hash>/<name>.grid.png` or `<name>.grid-01.png`, ... |
+| (none) | `$TMPDIR/gridity-<uid>/<name>-<hash>/<name>.grid.png` or `<name>.grid-01.png`, ... |
 | `dir/` (no image extension) | `dir/<name>.grid.png` or `dir/<name>.grid-01.png`, ... |
 | `out.png` / `out.jpg` | `out.png` or `out-01.png`, ...; the extension sets the format |
 
 The default directory depends only on the input path and the options, so re-running a
-command overwrites its previous sheets and removes ones no longer produced.
+command overwrites its previous sheets and removes ones no longer produced. It belongs to
+the current user (`<uid>` is the numeric user id, mode 0700; `gridity` on Windows), and
+gridity refuses to use it if another user owns it or can write to it. Sheets are written
+to a temporary file and renamed, so a sheet path never holds a half-written image.
 
 Formats: `--format png|jpeg` (`--quality 1-100`, default 85). Defaults are PNG for PDFs
-and images, JPEG for video and animations. A PNG sheet above 5 MB is re-encoded as JPEG
-with a warning, because common APIs reject larger images.
+and images, JPEG for video and animations. Image size limits are checked on the base64
+encoding, as the APIs count it: Claude's API accepts 10 MB, Amazon Bedrock and Google Cloud
+5 MB. A PNG sheet above 5 MB as base64 (about 3.75 MB on disk) is re-encoded as JPEG with
+a warning when the format was not chosen; with `--format png` or `-o out.png` the PNG is
+kept and only the warning is printed.
 
 ## stdout
 
@@ -28,7 +34,7 @@ and no files.
   "limits": { "preset": "compat", "max_edge": 1568, "max_tokens": 1568 },
   "sheets": [
     {
-      "path": "/abs/tmp/gridity/deck-1a2b3c4d/deck.grid-01.png",
+      "path": "/abs/tmp/gridity-501/deck-1a2b3c4d5e6f7a8b/deck.grid-01.png",
       "width": 896, "height": 1319, "est_tokens": 1536, "bytes": 68967,
       "grid": { "cols": 2, "rows": 2, "cell_width": 432, "cell_height": 611 },
       "cells": [

@@ -14,8 +14,11 @@ mod select;
 mod source;
 mod text;
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::process::ExitCode;
 
+use anyhow::anyhow;
 use clap::Parser;
 use serde_json::json;
 
@@ -38,12 +41,14 @@ fn main() -> ExitCode {
         _ => None,
     });
 
-    let result = match cli.command {
+    // A panic still ends with an exit code and, with --json, a JSON error.
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| match cli.command {
         Command::Render(args) => render::run(*args),
         Command::Probe(args) => probe::run(args),
         Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
-    };
+    }))
+    .unwrap_or_else(|panic| Err(anyhow!("internal error: {}", panic_message(&*panic))));
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => report(&err, json),
@@ -81,6 +86,14 @@ fn report_parse_error(err: clap::Error) -> ExitCode {
     } else {
         ErrorKind::Usage.exit_code() as u8
     })
+}
+
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 fn configure_threads(jobs: Option<usize>) {

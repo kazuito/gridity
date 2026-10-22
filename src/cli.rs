@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
+use clap::builder::RangedU64ValueParser;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::Rgba;
 
 use crate::color::parse_color;
+use crate::layout::MAX_SHEETS;
 
 const RENDER_EXAMPLES: &str = "\
 Examples:
@@ -111,7 +113,7 @@ pub struct RenderArgs {
     #[command(flatten)]
     pub selection: SelectionArgs,
 
-    /// Output file or directory [default: $TMPDIR/gridity/<name>-<hash>/]
+    /// Output file or directory [default: $TMPDIR/gridity-<uid>/<name>-<hash>/]
     #[arg(short, long, value_name = "PATH", help_heading = "Output")]
     pub output: Option<PathBuf>,
 
@@ -145,8 +147,8 @@ pub struct RenderArgs {
     #[command(flatten)]
     pub style: StyleArgs,
 
-    /// Number of parallel workers [default: min(CPU cores, 8)]
-    #[arg(short, long, value_name = "N")]
+    /// Number of parallel workers, 1-256 [default: min(CPU cores, 8)]
+    #[arg(short, long, value_name = "N", value_parser = RangedU64ValueParser::<usize>::new().range(1..=256))]
     pub jobs: Option<usize>,
 }
 
@@ -204,40 +206,40 @@ pub struct LayoutArgs {
     #[arg(long, value_enum, default_value = "compat", help_heading = "Layout")]
     pub preset: Preset,
 
-    /// Override the preset's maximum sheet edge in pixels
-    #[arg(long, value_name = "PX", help_heading = "Layout")]
+    /// Override the preset's maximum sheet edge in pixels (28-8000; Claude rejects larger images)
+    #[arg(long, value_name = "PX", value_parser = clap::value_parser!(u32).range(28..=8000), help_heading = "Layout")]
     pub max_edge: Option<u32>,
 
-    /// Override the preset's visual token budget per sheet (one token per 28x28 px)
-    #[arg(long, value_name = "N", help_heading = "Layout")]
+    /// Override the preset's visual token budget per sheet (one token per 28x28 px, 1-81225)
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=81225), help_heading = "Layout")]
     pub max_tokens: Option<u32>,
 
     /// How large each cell must stay; decides how many items go on a sheet
     #[arg(long, value_enum, default_value = "medium", help_heading = "Layout")]
     pub detail: Detail,
 
-    /// Items per sheet (overrides --detail)
-    #[arg(long, value_name = "N", help_heading = "Layout")]
+    /// Items per sheet, 1-10000 (overrides --detail)
+    #[arg(long, value_name = "N", value_parser = RangedU64ValueParser::<usize>::new().range(1..=10_000), help_heading = "Layout")]
     pub per_sheet: Option<usize>,
 
-    /// Columns per sheet
-    #[arg(long, value_name = "N", help_heading = "Layout")]
+    /// Columns per sheet (1-100)
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=100), help_heading = "Layout")]
     pub cols: Option<u32>,
 
-    /// Rows per sheet
-    #[arg(long, value_name = "N", help_heading = "Layout")]
+    /// Rows per sheet (1-100)
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=100), help_heading = "Layout")]
     pub rows: Option<u32>,
 
-    /// Fail instead of writing more sheets than this
-    #[arg(long, value_name = "N", default_value_t = 10, help_heading = "Layout")]
+    /// Fail instead of writing more sheets than this (1-1000)
+    #[arg(long, value_name = "N", default_value_t = 10, value_parser = RangedU64ValueParser::<usize>::new().range(1..=MAX_SHEETS as u64), help_heading = "Layout")]
     pub max_sheets: usize,
 
-    /// Space between cells in pixels
-    #[arg(long, value_name = "PX", default_value_t = 8, help_heading = "Layout")]
+    /// Space between cells in pixels (0-1000)
+    #[arg(long, value_name = "PX", default_value_t = 8, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub gap: u32,
 
-    /// Space around the grid in pixels
-    #[arg(long, value_name = "PX", default_value_t = 12, help_heading = "Layout")]
+    /// Space around the grid in pixels (0-1000)
+    #[arg(long, value_name = "PX", default_value_t = 12, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub padding: u32,
 }
 
@@ -267,11 +269,12 @@ pub struct StyleArgs {
     #[arg(long, value_enum, help_heading = "Style")]
     pub label_pos: Option<LabelPos>,
 
-    /// Label font size in pixels
+    /// Label font size in pixels (4-200)
     #[arg(
         long,
         value_name = "PX",
         default_value_t = 15.0,
+        value_parser = parse_label_size,
         help_heading = "Style"
     )]
     pub label_size: f32,
@@ -287,6 +290,17 @@ pub struct StyleArgs {
     /// TTF/OTF font for header and labels [default: embedded BIZ UDGothic]
     #[arg(long, value_name = "PATH", help_heading = "Style")]
     pub font: Option<PathBuf>,
+}
+
+fn parse_label_size(text: &str) -> Result<f32, String> {
+    let size: f32 = text
+        .parse()
+        .map_err(|_| format!("{text} is not a number"))?;
+    if size.is_finite() && (4.0..=200.0).contains(&size) {
+        Ok(size)
+    } else {
+        Err("must be between 4 and 200".to_string())
+    }
 }
 
 #[derive(Debug, Clone, Args)]

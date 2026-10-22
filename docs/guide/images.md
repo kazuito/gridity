@@ -13,6 +13,8 @@ gridity render screenshots/            # every image in the directory (not recur
 - Images are never upscaled; cells shrink to the largest input instead of adding empty
   space.
 - `--crop X,Y,W,H` keeps the same region of every image, in fractions of its upright size.
+- An image (or GIF/APNG frame) that needs more than 512 MiB to decode is rejected with
+  exit 3; resize it first.
 
 ## Labels
 

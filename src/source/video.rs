@@ -1,6 +1,9 @@
-use std::io::ErrorKind as IoErrorKind;
+use std::ffi::OsString;
+use std::io::{ErrorKind as IoErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -10,6 +13,9 @@ use serde_json::Value;
 use super::{Item, ItemKey, LabelVars, Warnings, fit_size};
 use crate::error::{dependency, input};
 use crate::select::Crop;
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const FRAME_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct VideoSource {
     pub path: PathBuf,
@@ -35,9 +41,13 @@ impl VideoSource {
                     "json",
                     "-show_format",
                     "-show_streams",
+                    "-protocol_whitelist",
+                    "file",
+                    "-i",
                 ])
-                .arg(path),
+                .arg(input_url(path)),
             &ffprobe,
+            PROBE_TIMEOUT,
         )?;
         if !output.status.success() {
             return Err(input(format!(
@@ -178,9 +188,11 @@ impl VideoSource {
                     "-nostdin",
                     "-ss",
                     &format!("{t:.3}"),
+                    "-protocol_whitelist",
+                    "file",
                     "-i",
                 ])
-                .arg(&self.path)
+                .arg(input_url(&self.path))
                 .args([
                     "-frames:v",
                     "1",
@@ -197,6 +209,7 @@ impl VideoSource {
                     "-",
                 ]),
             &self.ffmpeg,
+            FRAME_TIMEOUT,
         )?;
         if !output.status.success() || output.stdout.is_empty() {
             return Ok(None);
@@ -225,15 +238,65 @@ fn resolve_tools(custom: Option<&Path>) -> (PathBuf, PathBuf) {
     (ffmpeg, ffprobe)
 }
 
-fn run_tool(command: &mut Command, program: &Path) -> Result<Output> {
-    command.output().map_err(|e| {
-        if e.kind() == IoErrorKind::NotFound {
-            dependency(format!("{} was not found", program.display()))
-                .with_hint("install ffmpeg (e.g. `brew install ffmpeg`) or pass --ffmpeg / set GRIDITY_FFMPEG")
-                .into()
-        } else {
-            anyhow::Error::new(e).context(format!("failed to run {}", program.display()))
+/// A `file:` URL with an absolute path, so ffmpeg reads names like `a:b.mp4` or `-clip.mp4`
+/// as files rather than as a protocol or an option.
+fn input_url(path: &Path) -> OsString {
+    let mut url = OsString::from("file:");
+    url.push(std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
+    url
+}
+
+/// Runs a tool and collects its output, killing it when it runs longer than `timeout`.
+fn run_tool(command: &mut Command, program: &Path, timeout: Duration) -> Result<Output> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| -> anyhow::Error {
+            if e.kind() == IoErrorKind::NotFound {
+                dependency(format!("{} was not found", program.display()))
+                    .with_hint("install ffmpeg (e.g. `brew install ffmpeg`) or pass --ffmpeg / set GRIDITY_FFMPEG")
+                    .into()
+            } else {
+                anyhow::Error::new(e).context(format!("failed to run {}", program.display()))
+            }
+        })?;
+    // Both pipes are drained while waiting; a full pipe would otherwise stall the tool.
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
         }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(input(format!(
+                "{} did not finish within {}s",
+                program.display(),
+                timeout.as_secs_f64()
+            ))
+            .with_hint("the video may be damaged or very slow to decode; re-encode it or pick other times with --at")
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    Ok(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
     })
 }
 
@@ -285,6 +348,37 @@ mod tests {
         assert_eq!(parse_ratio("4:3"), Some(4.0 / 3.0));
         assert_eq!(parse_ratio("0:1"), None);
         assert_eq!(parse_ratio("N/A"), None);
+    }
+
+    #[test]
+    fn input_urls_are_absolute_files() {
+        let url = input_url(Path::new("-clip.mp4"));
+        let url = url.to_str().unwrap();
+        assert!(url.starts_with("file:"));
+        assert!(Path::new(&url["file:".len()..]).is_absolute());
+        assert!(url.ends_with("/-clip.mp4") || url.ends_with("\\-clip.mp4"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tools_are_killed_after_the_timeout() {
+        let started = Instant::now();
+        let err = run_tool(
+            Command::new("sleep").arg("5"),
+            Path::new("sleep"),
+            Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(err.to_string().contains("did not finish"));
+
+        let output = run_tool(
+            Command::new("head").args(["-c", "1000000", "/dev/zero"]),
+            Path::new("head"),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(output.stdout.len(), 1_000_000);
     }
 
     #[test]

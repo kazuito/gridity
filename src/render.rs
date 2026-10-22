@@ -2,26 +2,31 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use ab_glyph::FontArc;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
 
 use crate::cli::{Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs};
 use crate::compose::{Cell, Header, Style, compose, header_height, place};
 use crate::detect::detect;
 use crate::error::{CliError, input, usage};
-use crate::layout::{Chrome, Limits, PlanOptions, SheetPlan, capacity, plan, token_cost};
+use crate::layout::{
+    Chrome, Limits, PlanOptions, SheetPlan, capacity, check_sheets, plan, token_cost,
+};
 use crate::output::{
-    CellInfo, LimitsInfo, MAX_IMAGE_BYTES, Manifest, SheetInfo, Target, encode,
-    format_from_extension,
+    CellInfo, LimitsInfo, MANY_IMAGES_MAX_EDGE, MAX_BASE64_BYTES, Manifest, SheetInfo, Target,
+    base64_len, encode, format_from_extension, write_atomic,
 };
 use crate::select::{
-    Crop, Sampling, format_time, min_interval, parse_crop, parse_pages, parse_time, sample_times,
+    Crop, Sampling, format_time, min_interval, parse_crop, parse_pages, parse_time, sample_count,
+    sample_times,
 };
 use crate::source::{Item, ItemKey, Source, Warnings, file_name, fit_size};
 use crate::text::load_font;
 
 /// Upper bound when estimating how many frames fit on one sheet.
 const MAX_CAPACITY: usize = 200;
+/// Animation timestamps collapse into frames, so they are limited by count rather than by sheets.
+const MAX_ANIM_SAMPLES: usize = 1_000_000;
 
 pub fn default_label_pos(kind: InputKind) -> LabelPos {
     match kind {
@@ -140,10 +145,10 @@ pub fn run(args: RenderArgs) -> Result<()> {
         sheets.len()
     ));
 
-    let format = args
+    let requested_format = args
         .format
-        .or_else(|| args.output.as_deref().and_then(format_from_extension))
-        .unwrap_or_else(|| default_format(kind));
+        .or_else(|| args.output.as_deref().and_then(format_from_extension));
+    let format = requested_format.unwrap_or_else(|| default_format(kind));
     let target = Target::resolve(
         args.output.as_deref(),
         &output_stem(&source, &args.inputs),
@@ -204,27 +209,33 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
             let mut sheet_format = format;
             let mut data = encode(&canvas, sheet_format, args.quality)?;
-            if data.len() > MAX_IMAGE_BYTES && sheet_format == Format::Png {
+            let too_large = |data: &[u8]| base64_len(data.len()) > MAX_BASE64_BYTES;
+            if too_large(&data) && sheet_format == Format::Png && requested_format.is_none() {
                 warnings.push(format!(
-                    "sheet {} exceeded 5 MB as PNG and was written as JPEG instead",
+                    "sheet {} exceeded 5 MB as base64 PNG and was written as JPEG instead",
                     sheet_index + 1
                 ));
                 sheet_format = Format::Jpeg;
                 data = encode(&canvas, sheet_format, args.quality)?;
             }
-            if data.len() > MAX_IMAGE_BYTES {
+            if too_large(&data) {
                 warnings.push(format!(
-                    "sheet {} is larger than 5 MB; some APIs will reject it",
-                    sheet_index + 1
+                    "sheet {} is {:.1} MB as base64; Amazon Bedrock and Google Cloud reject images over 5 MB",
+                    sheet_index + 1,
+                    base64_len(data.len()) as f64 / 1e6
                 ));
             }
             let path = target.sheet_path(sheet_index, sheets.len(), sheet_format);
-            std::fs::write(&path, &data)
-                .with_context(|| format!("failed to write {}", path.display()))?;
+            write_atomic(&path, &data)?;
             written.push(path.clone());
             (rects, Some(path), Some(data.len()))
         };
 
+        if width.max(height) > MANY_IMAGES_MAX_EDGE {
+            warnings.push(format!(
+                "sheets over {MANY_IMAGES_MAX_EDGE} px are rejected in requests with more than 20 images; use --preset compat for those"
+            ));
+        }
         sheet_infos.push(SheetInfo {
             path: path.map(|p| p.display().to_string()),
             width,
@@ -307,9 +318,6 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
         args.layout.max_edge,
         args.layout.max_tokens,
     );
-    if limits.max_edge < 28 || limits.max_tokens == 0 {
-        return Err(usage("--max-edge must be at least 28 and --max-tokens at least 1").into());
-    }
     let options = PlanOptions {
         per_sheet: args.layout.per_sheet,
         cols: args.layout.cols,
@@ -318,9 +326,6 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
         max_cell: None,
         max_sheets: args.layout.max_sheets,
     };
-    if options.per_sheet == Some(0) || options.cols == Some(0) || options.rows == Some(0) {
-        return Err(usage("--per-sheet, --cols and --rows must be at least 1").into());
-    }
     if let (Some(n), Some(c), Some(r)) = (options.per_sheet, options.cols, options.rows)
         && n > (c * r) as usize
     {
@@ -459,17 +464,40 @@ fn select_uncropped(
         }
         Source::Images(images) => Ok(images.items()),
         Source::Video(video) => {
-            let times = select_times(sel, video.duration, one_sheet(video.aspect()))?;
+            let cap = one_sheet(video.aspect());
+            let (start, end, sampling) = select_range(sel, video.duration, cap)?;
+            let count = sample_count(start, end, &sampling);
+            // Every timestamp is an item; `cap` is exact only below MAX_CAPACITY, so `plan` does the exact check.
+            if count
+                > layout
+                    .options
+                    .max_sheets
+                    .saturating_mul(cap.max(MAX_CAPACITY))
+            {
+                check_sheets(count, cap, layout.options.max_sheets)?;
+            }
+            let times = sample_times(start, end, &sampling);
             let long = video.duration.is_some_and(|d| d >= 3600.0);
             let labels = time_labels(&times, long);
             Ok(video.items(&times, &labels))
         }
         Source::Anim(anim) => {
-            let times = select_times(sel, Some(anim.duration), one_sheet(anim.aspect()))?;
+            let (start, end, sampling) =
+                select_range(sel, Some(anim.duration), one_sheet(anim.aspect()))?;
+            let count = sample_count(start, end, &sampling);
+            if count > MAX_ANIM_SAMPLES {
+                return Err(usage(format!(
+                    "the selection takes {count} timestamps, more than {MAX_ANIM_SAMPLES}"
+                ))
+                .with_hint("use a longer --every or a smaller --count")
+                .into());
+            }
+            let mut seen = vec![false; anim.starts.len()];
             let mut frames: Vec<usize> = Vec::new();
-            for t in times {
+            for t in sample_times(start, end, &sampling) {
                 let frame = anim.frame_at(t);
-                if !frames.contains(&frame) {
+                if !seen[frame] {
+                    seen[frame] = true;
                     frames.push(frame);
                 }
             }
@@ -495,11 +523,12 @@ fn apply_crop(items: &mut [Item], crop: Crop) {
     }
 }
 
-fn select_times(
+/// Resolves --start, --end and the sampling option against the media duration.
+fn select_range(
     sel: &SelectionArgs,
     duration: Option<f64>,
     default_count: usize,
-) -> Result<Vec<f64>, CliError> {
+) -> Result<(f64, f64, Sampling), CliError> {
     let start = sel
         .start
         .as_deref()
@@ -541,7 +570,7 @@ fn select_times(
             format_time(bad, false, true)
         )));
     }
-    Ok(sample_times(start, end, &sampling))
+    Ok((start, end, sampling))
 }
 
 fn time_labels(times: &[f64], long: bool) -> Vec<String> {

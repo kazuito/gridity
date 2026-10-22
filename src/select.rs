@@ -268,6 +268,29 @@ pub fn sample_times(start: f64, end: f64, sampling: &Sampling) -> Vec<f64> {
     }
 }
 
+/// Number of timestamps `sample_times` returns, computed without allocating them.
+pub fn sample_count(start: f64, end: f64, sampling: &Sampling) -> usize {
+    let span = (end - start).max(0.0);
+    match sampling {
+        Sampling::Count(n) => *n,
+        Sampling::Every(step) => {
+            let estimate = (span / step).ceil();
+            if estimate >= 1e15 {
+                return usize::MAX;
+            }
+            let mut n = (estimate as usize).max(1);
+            while n > 1 && start + step * (n - 1) as f64 >= end {
+                n -= 1;
+            }
+            while start + step * (n as f64) < end {
+                n += 1;
+            }
+            n
+        }
+        Sampling::At(times) => times.len(),
+    }
+}
+
 /// Smallest gap between consecutive timestamps, used to decide whether labels need tenths.
 pub fn min_interval(times: &[f64]) -> Option<f64> {
     let mut sorted = times.to_vec();
@@ -282,6 +305,35 @@ pub fn min_interval(times: &[f64]) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_count_matches_sample_times() {
+        for (start, end, step) in [
+            (0.0, 20.0, 1.0),
+            (0.0, 20.0, 3.0),
+            (5.0, 15.0, 1.0),
+            (0.0, 1.0, 0.1),
+            (0.0, 0.3, 0.1),
+            (2.0, 2.5, 10.0),
+        ] {
+            let sampling = Sampling::Every(step);
+            assert_eq!(
+                sample_count(start, end, &sampling),
+                sample_times(start, end, &sampling).len(),
+                "{start}..{end} every {step}"
+            );
+        }
+        assert_eq!(sample_count(0.0, 20.0, &Sampling::Count(7)), 7);
+        assert_eq!(sample_count(0.0, 20.0, &Sampling::At(vec![1.0, 2.0])), 2);
+        assert_eq!(
+            sample_count(0.0, 20.0, &Sampling::Every(0.000001)),
+            20_000_000
+        );
+        assert_eq!(
+            sample_count(0.0, 7200.0, &Sampling::Every(1e-300)),
+            usize::MAX
+        );
+    }
 
     #[test]
     fn parse_crop_accepts_fractions_within_the_page() {

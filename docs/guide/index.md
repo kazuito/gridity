@@ -33,7 +33,7 @@ that change their meaning; read formulas from the page images.
 - stdout: `render` prints one absolute path per sheet (or a JSON manifest with `--json`);
   `probe` and `text` print their report (JSON with `--json`).
 - stderr: warnings and errors (`error: ...` / `hint: ...`).
-- Sheets go to `$TMPDIR/gridity/<name>-<hash>/` unless `-o` is given; re-running the
+- Sheets go to `$TMPDIR/gridity-<uid>/<name>-<hash>/` unless `-o` is given; re-running the
   same command overwrites the same files.
 - Exit codes: 0 ok, 1 runtime error, 2 bad arguments or selection, 3 unsupported or
   broken input, 4 missing dependency (ffmpeg).

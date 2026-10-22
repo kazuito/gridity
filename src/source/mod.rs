@@ -10,7 +10,10 @@ use anyhow::Result;
 use image::RgbaImage;
 
 use crate::cli::{InputKind, SourceArgs};
+use crate::error::{CliError, input};
 use crate::select::Crop;
+
+const MAX_DECODE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// One thing to show in a cell: a PDF page, a video timestamp, an animation frame or an image file.
 #[derive(Debug, Clone)]
@@ -110,6 +113,27 @@ pub fn fit_size(aspect: f64, bounds: (u32, u32), native: Option<(u32, u32)>) -> 
         (max_w, (max_w as f64 / aspect).round() as u32)
     };
     (w.clamp(1, max_w.max(1)), h.clamp(1, max_h.max(1)))
+}
+
+/// Caps what decoding an image or animation may allocate, so a tiny file cannot claim gigabytes.
+pub fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::no_limits();
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+    limits
+}
+
+pub fn decode_error(path: &Path, error: image::ImageError) -> CliError {
+    match error {
+        image::ImageError::Limits(_) => input(format!(
+            "{} is too large to decode ({error})",
+            path.display()
+        ))
+        .with_hint(format!(
+            "resize or re-encode it: decoding may use at most {} MiB",
+            MAX_DECODE_BYTES / 1024 / 1024
+        )),
+        _ => input(format!("cannot decode {}: {error}", path.display())),
+    }
 }
 
 /// Warnings collected from parallel workers and reported once at the end.

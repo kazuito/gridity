@@ -9,8 +9,13 @@ Every sheet is sized so Claude does not downscale it, which keeps cell coordinat
 | `compat` (default) | 1568 px | 1568 | Every Claude model; safe for other LLMs |
 | `hires` | 2576 px | 4784 | Claude 4.7 and later models |
 
-Tokens are counted as `ceil(w/28) * ceil(h/28)`. Override with `--max-edge` and
-`--max-tokens` for other models.
+A request with more than 20 images (counting earlier turns and tool results) rejects
+every image larger than 2000 px, so use `compat` for such requests; `hires` sheets above
+2000 px get a warning. Limits are from
+<https://platform.claude.com/docs/en/build-with-claude/vision> (checked 2026-10-22).
+
+Tokens are counted as `ceil(w/28) * ceil(h/28)`. Override with `--max-edge` (28-8000) and
+`--max-tokens` (1-81225) for other models; Claude rejects images larger than 8000 px.
 
 ## Items per sheet
 
@@ -58,7 +63,7 @@ their pixels and are not upscaled.
 
 ## Spacing and colors
 
-- `--gap PX` (8), `--padding PX` (12)
+- `--gap PX` (8), `--padding PX` (12), each 0-1000
 - `--bg COLOR` (`#ffffff`); colors accept `#rgb`, `#rrggbb`, `#rrggbbaa`, `white`,
   `black`, `gray`, `red`, `transparent`
 
@@ -75,6 +80,6 @@ shortened in the middle, so the range and sheet number stay visible. Replace it 
   variables are an error that lists the valid ones.
 - `--no-label`
 - `--label-pos below|overlay` — below the cell, or a badge in its top-left corner
-- `--label-size PX` (15), `--label-color COLOR`, `--label-bg COLOR`
+- `--label-size PX` (15, 4-200), `--label-color COLOR`, `--label-bg COLOR`
 - `--font PATH` — TTF/OTF for header and labels (default: embedded BIZ UDGothic, which
   covers Japanese)

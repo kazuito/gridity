@@ -6,9 +6,9 @@ use anyhow::{Context, Result};
 use image::codecs::gif::GifDecoder;
 use image::codecs::png::PngDecoder;
 use image::imageops::{self, FilterType};
-use image::{AnimationDecoder, Frames, RgbaImage};
+use image::{AnimationDecoder, Frames, ImageDecoder, RgbaImage};
 
-use super::{Item, ItemKey, LabelVars, fit_size};
+use super::{Item, ItemKey, LabelVars, decode_error, decode_limits, fit_size};
 use crate::error::input;
 
 /// Browsers show GIF and APNG frames with a delay of 10 ms or less for 100 ms; do the same so
@@ -39,8 +39,7 @@ impl AnimSource {
         let mut size = (0, 0);
         // First pass reads only the timing so memory stays bounded for long animations.
         for frame in frames(path, format)? {
-            let frame =
-                frame.map_err(|e| input(format!("cannot decode {}: {e}", path.display())))?;
+            let frame = frame.map_err(|e| decode_error(path, e))?;
             size = frame.buffer().dimensions();
             starts.push(elapsed);
             let (num, den) = frame.delay().numer_denom_ms();
@@ -103,13 +102,7 @@ impl AnimSource {
         let mut images: Vec<Option<RgbaImage>> = vec![None; items.len()];
 
         for (index, frame) in frames(&self.path, self.format)?.enumerate().take(last + 1) {
-            let frame = frame.with_context(|| {
-                format!(
-                    "cannot decode frame {} of {}",
-                    index + 1,
-                    self.path.display()
-                )
-            })?;
+            let frame = frame.map_err(|e| decode_error(&self.path, e))?;
             for (slot, _) in wanted.iter().enumerate().filter(|(_, w)| **w == index) {
                 let (w, h) = fit_size(items[slot].aspect, boxes[slot], items[slot].native);
                 let buffer = frame.buffer();
@@ -153,10 +146,14 @@ fn frames(path: &Path, format: AnimFormat) -> Result<Frames<'static>> {
     let reader = BufReader::new(
         File::open(path).with_context(|| format!("failed to open {}", path.display()))?,
     );
-    let invalid = |e: image::ImageError| input(format!("cannot decode {}: {e}", path.display()));
+    let invalid = |e| decode_error(path, e);
     Ok(match format {
-        AnimFormat::Gif => GifDecoder::new(reader).map_err(invalid)?.into_frames(),
-        AnimFormat::Apng => PngDecoder::new(reader)
+        AnimFormat::Gif => {
+            let mut decoder = GifDecoder::new(reader).map_err(invalid)?;
+            decoder.set_limits(decode_limits()).map_err(invalid)?;
+            decoder.into_frames()
+        }
+        AnimFormat::Apng => PngDecoder::with_limits(reader, decode_limits())
             .map_err(invalid)?
             .apng()
             .map_err(invalid)?

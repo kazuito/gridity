@@ -23,6 +23,14 @@ fn run_json(args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// Runs a command expected to fail with exit 2 and returns its JSON `error` object.
+fn run_error_json(args: &[&str]) -> Value {
+    let output = gridity().args(args).arg("--json").output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    body["error"].clone()
+}
+
 fn s(path: &Path) -> &str {
     path.to_str().unwrap()
 }
@@ -132,6 +140,18 @@ fn write_png(path: &Path, width: u32, height: u32, shade: u8) {
     RgbImage::from_pixel(width, height, Rgb([shade, 100, 200]))
         .save(path)
         .unwrap();
+}
+
+/// Random pixels, so the PNG barely compresses.
+fn write_noise_png(path: &Path, width: u32, height: u32) {
+    let mut state: u32 = 0x1234_5678;
+    RgbImage::from_fn(width, height, |_, _| {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let [r, g, b, _] = state.to_be_bytes();
+        Rgb([r, g, b])
+    })
+    .save(path)
+    .unwrap();
 }
 
 /// JPEG with an EXIF APP1 segment carrying the given orientation tag.
@@ -654,6 +674,50 @@ fn missing_and_unknown_inputs_exit_3() {
         .stderr(predicate::str::contains("--type"));
 }
 
+#[cfg(unix)]
+#[test]
+fn default_output_is_private_and_stable() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0); 2]);
+    let tmp = dir.path().join("tmp");
+    std::fs::create_dir(&tmp).unwrap();
+
+    let render = || {
+        let output = gridity()
+            .args(["render", s(&pdf)])
+            .env("TMPDIR", &tmp)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
+    };
+    let first = render();
+    assert_eq!(render(), first);
+    assert!(first.is_file());
+    let sheet_dir = first.parent().unwrap();
+    let root = sheet_dir.parent().unwrap();
+    assert_eq!(root.parent().unwrap(), tmp);
+    assert!(
+        root.file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("gridity-")
+    );
+    for d in [root, sheet_dir] {
+        let mode = std::fs::metadata(d).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{}", d.display());
+    }
+    let leftovers: Vec<_> = std::fs::read_dir(sheet_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty());
+}
+
 #[test]
 fn jpeg_mentioning_pdf_is_an_image() {
     let dir = TempDir::new().unwrap();
@@ -733,6 +797,47 @@ fn small_images_are_not_upscaled() {
 }
 
 #[test]
+fn oversized_png_falls_back_to_jpeg_only_by_default() {
+    let dir = TempDir::new().unwrap();
+    let noise = dir.path().join("noise.png");
+    write_noise_png(&noise, 1500, 1000);
+
+    let manifest = run_json(&["render", s(&noise), "-o", s(&dir.path().join("out"))]);
+    let path = manifest["sheets"][0]["path"].as_str().unwrap();
+    assert!(path.ends_with(".jpg"), "{path}");
+    assert!(
+        manifest["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("written as JPEG")
+    );
+
+    let explicit = dir.path().join("sheet.png");
+    let manifest = run_json(&["render", s(&noise), "-o", s(&explicit)]);
+    assert_eq!(manifest["sheets"][0]["path"], s(&explicit));
+    assert!(explicit.is_file());
+    let bytes = manifest["sheets"][0]["bytes"].as_u64().unwrap();
+    assert!(bytes.div_ceil(3) * 4 > 5_000_000, "{bytes} bytes");
+    assert!(manifest["warnings"][0].as_str().unwrap().contains("5 MB"));
+}
+
+#[test]
+fn hires_sheets_warn_about_many_image_requests() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0)]);
+    let manifest = run_json(&["render", s(&pdf), "--preset", "hires", "--dry-run"]);
+    assert!(
+        manifest["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("2000 px")
+    );
+    let manifest = run_json(&["render", s(&pdf), "--dry-run"]);
+    assert_eq!(manifest["warnings"].as_array().unwrap().len(), 0);
+}
+
+#[test]
 fn fixed_columns_put_one_row_on_a_sheet() {
     let dir = TempDir::new().unwrap();
     let shots = dir.path().join("shots");
@@ -799,6 +904,42 @@ fn gif_frames_follow_requested_times() {
         .args(["render", s(&gif), "--pages", "1"])
         .assert()
         .code(2);
+}
+
+/// A 66-byte GIF that declares a 12000x12000 screen with two 1x1 frames.
+fn write_gif_bomb(path: &Path) {
+    let mut gif = b"GIF89a".to_vec();
+    gif.extend(12000u16.to_le_bytes());
+    gif.extend(12000u16.to_le_bytes());
+    gif.extend([0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff]);
+    for _ in 0..2 {
+        gif.extend([0x21, 0xf9, 0x04, 0x00, 0x0a, 0x00, 0x00, 0x00]);
+        gif.extend([0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0]);
+        gif.extend([0x02, 0x02, 0x44, 0x01, 0x00]);
+    }
+    gif.push(0x3b);
+    std::fs::write(path, gif).unwrap();
+}
+
+#[test]
+fn oversized_images_are_rejected_before_decoding() {
+    let dir = TempDir::new().unwrap();
+    let bomb = dir.path().join("bomb.gif");
+    write_gif_bomb(&bomb);
+    let started = std::time::Instant::now();
+    gridity()
+        .args(["probe", s(&bomb)])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("too large to decode"));
+    assert!(started.elapsed().as_secs() < 5);
+
+    let panorama = dir.path().join("panorama.png");
+    write_png(&panorama, 17000, 2, 0);
+    gridity()
+        .args(["render", s(&panorama), "-o", s(&dir.path().join("out"))])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -886,6 +1027,68 @@ fn video_sampling_and_rotation() {
 }
 
 #[test]
+fn video_file_names_are_not_parsed_by_ffmpeg() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("clip.mp4");
+    write_video(&video, &[]);
+    for name in ["a:b.mp4", "-clip.mp4", "100%.mp4", "日本語 動画.mp4"] {
+        std::fs::copy(&video, dir.path().join(name)).unwrap();
+        let output = gridity()
+            .current_dir(dir.path())
+            .args(["render", "--count", "2", "-o", "out", "--json", "--", name])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn huge_samplings_fail_before_allocating() {
+    let dir = TempDir::new().unwrap();
+    let gif = dir.path().join("anim.gif");
+    write_gif(&gif, 10, 100);
+
+    let manifest = run_json(&["render", s(&gif), "--every", "0.001", "--dry-run"]);
+    assert_eq!(manifest["sheets"][0]["cells"].as_array().unwrap().len(), 10);
+
+    let started = std::time::Instant::now();
+    for args in [["--count", "200000000"], ["--every", "1e-9"]] {
+        gridity()
+            .args(["render", s(&gif), "--dry-run"])
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("timestamps"));
+    }
+    assert!(started.elapsed().as_secs() < 5);
+
+    if !have_ffmpeg() {
+        eprintln!("skipping video part: ffmpeg not available");
+        return;
+    }
+    let video = dir.path().join("clip.mp4");
+    write_video(&video, &[]);
+    let started = std::time::Instant::now();
+    for args in [["--every", "0.000001"], ["--count", "200000000"]] {
+        let output = run_error_json(&["render", s(&video), "--dry-run", args[0], args[1]]);
+        assert!(output["message"].as_str().unwrap().contains("--max-sheets"));
+        assert!(
+            !output["hint"].as_str().unwrap().contains("--max-sheets"),
+            "the hint must not suggest more sheets than --max-sheets accepts"
+        );
+    }
+    assert!(started.elapsed().as_secs() < 5);
+}
+
+#[test]
 fn missing_ffmpeg_exits_4() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("clip.mp4");
@@ -938,6 +1141,44 @@ fn argument_errors_are_json_with_json_flag() {
         .assert()
         .success();
     gridity().arg("--version").assert().success();
+}
+
+#[test]
+fn out_of_range_numbers_are_usage_errors() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0)]);
+    for args in [
+        ["--label-size", "NaN"],
+        ["--label-size", "-5"],
+        ["--label-size", "inf"],
+        ["--max-edge", "4294967295"],
+        ["--max-edge", "20000"],
+        ["--max-tokens", "400000"],
+        ["--padding", "4000000000"],
+        ["--cols", "0"],
+        ["--per-sheet", "0"],
+        ["--max-sheets", "0"],
+    ] {
+        let output = gridity()
+            .args(["render", s(&pdf), "-o", s(&dir.path().join("out"))])
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["error"]["kind"], "usage", "{args:?}");
+    }
+    run_json(&[
+        "render",
+        s(&pdf),
+        "--max-edge",
+        "8000",
+        "--label-size",
+        "40",
+        "--dry-run",
+    ]);
 }
 
 #[test]

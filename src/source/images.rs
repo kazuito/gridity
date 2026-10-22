@@ -7,7 +7,7 @@ use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageReader, RgbaImage};
 use rayon::prelude::*;
 
-use super::{Item, ItemKey, LabelVars, file_name, fit_size};
+use super::{Item, ItemKey, LabelVars, decode_error, decode_limits, file_name, fit_size};
 use crate::error::input;
 
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
@@ -117,12 +117,14 @@ pub fn has_image_extension(path: &Path) -> bool {
 fn open_decoder(path: &Path) -> Result<impl ImageDecoder> {
     let unreadable =
         |e: &dyn std::fmt::Display| input(format!("cannot read image {}: {e}", path.display()));
-    ImageReader::open(path)
+    let mut reader = ImageReader::open(path)
         .map_err(|e| unreadable(&e))?
         .with_guessed_format()
-        .map_err(|e| unreadable(&e))?
+        .map_err(|e| unreadable(&e))?;
+    reader.limits(decode_limits());
+    reader
         .into_decoder()
-        .map_err(|e| unreadable(&e).into())
+        .map_err(|e| decode_error(path, e).into())
 }
 
 fn oriented_size(path: &Path) -> Result<(u32, u32)> {
@@ -141,8 +143,7 @@ fn oriented_size(path: &Path) -> Result<(u32, u32)> {
 fn decode_oriented(path: &Path) -> Result<DynamicImage> {
     let mut decoder = open_decoder(path)?;
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let mut image = DynamicImage::from_decoder(decoder)
-        .map_err(|e| input(format!("cannot decode image {}: {e}", path.display())))?;
+    let mut image = DynamicImage::from_decoder(decoder).map_err(|e| decode_error(path, e))?;
     image.apply_orientation(orientation);
     Ok(image)
 }

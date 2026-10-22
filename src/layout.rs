@@ -5,6 +5,8 @@ use crate::error::{CliError, usage};
 
 /// Claude splits images into 28x28 px patches; one patch costs one visual token.
 const PATCH: u32 = 28;
+/// Largest value `--max-sheets` accepts.
+pub const MAX_SHEETS: usize = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -170,9 +172,10 @@ fn largest_cell(cols: u32, rows: u32, aspect: f64, limits: Limits, chrome: Chrom
     if !fits_width(1) {
         return None;
     }
-    let (mut lo, mut hi) = (1, limits.max_edge + 1);
+    // Bounded so the sheet size arithmetic cannot overflow even for absurd limits.
+    let (mut lo, mut hi) = (1, limits.max_edge.min(u16::MAX as u32) + 1);
     while lo + 1 < hi {
-        let mid = (lo + hi) / 2;
+        let mid = lo + (hi - lo) / 2;
         if fits_width(mid) {
             lo = mid;
         } else {
@@ -245,6 +248,25 @@ pub fn capacity(
     cap
 }
 
+/// Number of sheets for `count` items at `cap` per sheet, or an error when that exceeds `max_sheets`.
+pub fn check_sheets(count: usize, cap: usize, max_sheets: usize) -> Result<usize, CliError> {
+    let cap = cap.max(1);
+    let sheets = count.div_ceil(cap).max(1);
+    if sheets > max_sheets {
+        return Err(usage(format!(
+            "{count} items need {sheets} sheets at {cap} per sheet, more than --max-sheets {max_sheets}"
+        ))
+        .with_hint(if sheets <= MAX_SHEETS {
+            format!(
+                "narrow the selection (--pages, --start/--end, --count, --every), use --detail low, or pass --max-sheets {sheets}"
+            )
+        } else {
+            "narrow the selection (--pages, --start/--end, a smaller --count or a longer --every) or use --detail low".to_string()
+        }));
+    }
+    Ok(sheets)
+}
+
 /// Splits `count` items into evenly filled sheets.
 pub fn plan(
     count: usize,
@@ -254,16 +276,7 @@ pub fn plan(
     opts: &PlanOptions,
 ) -> Result<Vec<SheetPlan>, CliError> {
     let cap = capacity(aspect, limits, chrome, opts, count);
-    let sheets = count.div_ceil(cap).max(1);
-    if sheets > opts.max_sheets {
-        return Err(usage(format!(
-            "{count} items need {sheets} sheets at {cap} per sheet, more than --max-sheets {}",
-            opts.max_sheets
-        ))
-        .with_hint(format!(
-            "narrow the selection (--pages, --start/--end, --count), use --detail low, or pass --max-sheets {sheets}"
-        )));
-    }
+    let sheets = check_sheets(count, cap, opts.max_sheets)?;
 
     let base = count / sheets;
     let extra = count % sheets;
@@ -406,6 +419,26 @@ mod tests {
         opts.rows = Some(2);
         let cap = capacity(1.0, COMPAT, CHROME, &opts, 50);
         assert!(cap >= 4 && cap.is_multiple_of(2), "cap={cap}");
+    }
+
+    #[test]
+    fn huge_max_edge_does_not_overflow() {
+        let limits = Limits {
+            max_edge: u32::MAX,
+            max_tokens: 1568,
+        };
+        let grid = best_grid(4, 1.0, limits, CHROME, None, None, None).unwrap();
+        let (w, h) = grid.sheet_size(CHROME);
+        assert!(fits(w, h, limits));
+        assert!(grid.cell_width > 100);
+    }
+
+    #[test]
+    fn hint_only_suggests_accepted_sheet_counts() {
+        let err = check_sheets(20_000_000, 12, 10).unwrap_err();
+        assert!(!err.hint.unwrap().contains("--max-sheets"));
+        let err = check_sheets(120, 12, 5).unwrap_err();
+        assert!(err.hint.unwrap().contains("--max-sheets 10"));
     }
 
     #[test]

@@ -86,6 +86,9 @@ variables), then renders a batch of items into `RgbaImage`s that fit given boxes
 - **Deterministic output location.** The default directory hashes the input paths and
   options (`render::fingerprint`), not the time or mtime, so a re-run overwrites the same
   files. `Target::remove_stale` deletes old sheets only in that gridity-managed directory.
+- **Private, atomic output.** The default root `$TMPDIR/gridity-<uid>/` is created 0700 and
+  refused if another user owns it or can write to it (`output::create_private_dir`).
+  Sheets are written with `output::write_atomic` (temp file + rename), never `fs::write`.
 - **Items are split evenly** across sheets (10 at 8 per sheet → 5 + 5).
 - **Video geometry uses display size**: SAR applied, width/height swapped for 90°/270°
   rotation (ffmpeg autorotates frames).
