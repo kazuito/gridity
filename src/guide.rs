@@ -12,6 +12,13 @@ const TOPICS: &[(&str, &str)] = &[
     ("mcp", include_str!("../docs/guide/mcp.md")),
 ];
 
+/// Every topic `text` accepts.
+pub fn topic_names() -> Vec<&'static str> {
+    let mut names: Vec<&str> = TOPICS.iter().map(|(name, _)| *name).collect();
+    names.push("all");
+    names
+}
+
 pub fn run(topic: Option<&str>) -> anyhow::Result<()> {
     println!("{}", text(topic)?);
     Ok(())
@@ -26,12 +33,11 @@ pub fn text(topic: Option<&str>) -> Result<String, CliError> {
         }
         name => {
             let (_, text) = TOPICS.iter().find(|(n, _)| *n == name).ok_or_else(|| {
-                let names: Vec<&str> = TOPICS.iter().map(|(n, _)| *n).collect();
                 usage(
                     Reason::UnknownTopic,
                     format!("unknown guide topic '{name}'"),
                 )
-                .with_hint(format!("topics: {}, all", names.join(", ")))
+                .with_hint(format!("topics: {}", topic_names().join(", ")))
             })?;
             Ok(text.trim_end().to_string())
         }

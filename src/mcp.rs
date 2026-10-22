@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use crate::cli::{Cli, Command, Detail, Format, InputKind, McpArgs, Preset};
 use crate::error::{CliError, ErrorKind, Reason, usage};
 use crate::extract::TextReport;
+use crate::layout::MAX_SHEETS;
 use crate::output::{Manifest, base64_len, format_from_extension};
 use crate::probe::ProbeReport;
 
@@ -51,6 +52,7 @@ struct RenderParams {
     /// One frame every interval, e.g. "5s".
     every: Option<String>,
     /// Number of evenly spaced frames.
+    #[schemars(range(min = 1))]
     count: Option<usize>,
     /// Frames at explicit times: "0:10,1:30".
     at: Option<String>,
@@ -61,10 +63,16 @@ struct RenderParams {
     /// Cell size: low = more items per sheet, high = larger cells (default medium).
     detail: Option<Detail>,
     /// Items per sheet (overrides detail).
+    #[schemars(range(min = 1, max = 10_000))]
     per_sheet: Option<usize>,
+    /// Columns per sheet.
+    #[schemars(range(min = 1, max = 100))]
     cols: Option<u32>,
+    /// Rows per sheet.
+    #[schemars(range(min = 1, max = 100))]
     rows: Option<u32>,
     /// Fail instead of writing more sheets than this (default 4 here).
+    #[schemars(range(min = 1, max = MAX_SHEETS))]
     max_sheets: Option<usize>,
     /// Image format (default png for PDF/images, jpeg for video/animations).
     format: Option<Format>,
@@ -72,7 +80,9 @@ struct RenderParams {
     label: Option<String>,
     /// Header text instead of the file name.
     title: Option<String>,
+    /// Do not draw the header.
     no_header: Option<bool>,
+    /// Do not draw labels.
     no_label: Option<bool>,
     /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
     password_file: Option<String>,
@@ -86,11 +96,14 @@ struct ProbeParams {
     /// Input file, several image files, or one directory of images.
     #[schemars(length(min = 1))]
     inputs: Vec<String>,
+    /// Input type, detected when omitted.
     #[serde(rename = "type")]
     kind: Option<InputKind>,
+    /// Size limits used for the sheet estimates (default compat).
     preset: Option<Preset>,
     /// Analyze every PDF page: content type, text size, images and drawings.
     per_page: Option<bool>,
+    /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
     password_file: Option<String>,
 }
 
@@ -101,6 +114,7 @@ struct TextParams {
     input: String,
     /// Pages, 1-based: "1-3,5,10-".
     pages: Option<String>,
+    /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
     password_file: Option<String>,
     /// Characters of page JSON in the result (default 40000). Pages beyond it are left out
     /// and named in next_pages.
@@ -117,7 +131,8 @@ const MAX_TEXT_CHARS: usize = 400_000;
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct GuideParams {
-    /// index (default), recipes, pdf, text, video, images, layout, output, mcp or all.
+    /// Guide topic (default index), or all for every topic.
+    #[schemars(extend("enum" = crate::guide::topic_names()))]
     topic: Option<String>,
 }
 
@@ -874,5 +889,64 @@ mod tests {
         let none = partial_summary(0, 2);
         assert!(none.contains("no sheet is attached"), "{none}");
         assert!(none.contains("sheets 1-2 are in the manifest"), "{none}");
+    }
+
+    #[test]
+    fn every_parameter_is_described() {
+        for tool in tools() {
+            let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+            for (name, property) in properties {
+                let description = property["description"].as_str().unwrap_or_default();
+                assert!(!description.is_empty(), "{}.{name}", tool["name"]);
+            }
+        }
+    }
+
+    #[test]
+    fn schema_ranges_match_the_cli() {
+        let tools = tools();
+        let render = &tools[0]["inputSchema"]["properties"];
+        for (name, flag, min, max) in [
+            ("cols", "cols", 1, 100),
+            ("rows", "rows", 1, 100),
+            ("per_sheet", "per-sheet", 1, 10_000),
+            ("max_sheets", "max-sheets", 1, MAX_SHEETS as u64),
+        ] {
+            assert_eq!(render[name]["minimum"], min, "{name}");
+            assert_eq!(render[name]["maximum"], max, "{name}");
+            let parses = |value: u64| {
+                let mut argv = Argv::new("render");
+                argv.value(flag, Some(value));
+                argv.parse(vec!["x.pdf".to_string()]).is_ok()
+            };
+            assert!(parses(min) && parses(max), "{name}");
+            assert!(!parses(min - 1) && !parses(max + 1), "{name}");
+        }
+        assert_eq!(render["count"]["minimum"], 1);
+        assert!(render["count"]["maximum"].is_null());
+        assert!(crate::select::Sampling::from_args(None, Some(0), None).is_err());
+    }
+
+    #[test]
+    fn guide_topics_are_an_enum() {
+        let tools = tools();
+        let schema = &tools[3]["inputSchema"];
+        assert!(schema["required"].as_array().is_none_or(|r| r.is_empty()));
+        let topics: Vec<&str> = schema["properties"]["topic"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert_eq!(topics, crate::guide::topic_names());
+        assert!(topics.contains(&"mcp") && topics.contains(&"all"));
+        for topic in topics {
+            assert!(crate::guide::text(Some(topic)).is_ok(), "{topic}");
+        }
+        let unknown = guide(GuideParams {
+            topic: Some("nope".to_string()),
+        });
+        let error = crate::describe(&unknown.unwrap_err());
+        assert_eq!(error.reason, Reason::UnknownTopic);
     }
 }
