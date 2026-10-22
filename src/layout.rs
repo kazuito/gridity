@@ -211,6 +211,7 @@ pub struct SheetPlan {
 }
 
 /// How many items fit on one sheet without cells shrinking below `min_cell`.
+/// A fixed `--cols` or `--rows` always fills at least one full row or column.
 pub fn capacity(
     aspect: f64,
     limits: Limits,
@@ -222,10 +223,12 @@ pub fn capacity(
         return n.max(1);
     }
     if let (Some(c), Some(r)) = (opts.cols, opts.rows) {
-        return (c * r).max(1) as usize;
+        return (c.saturating_mul(r)).max(1) as usize;
     }
-    let mut cap = 1;
-    for k in 1..=upper.max(1) {
+    // With one axis fixed, every count up to the next full row or column gives the same grid.
+    let step = opts.cols.or(opts.rows).unwrap_or(1).max(1) as usize;
+    let mut cap = step;
+    for k in (step..=upper.max(1).div_ceil(step) * step).step_by(step) {
         match best_grid(
             k,
             aspect,
@@ -374,6 +377,35 @@ mod tests {
         assert_eq!(capacity(a4, COMPAT, CHROME, &options(600), 50), 4);
         assert!(capacity(a4, COMPAT, CHROME, &options(400), 50) >= 9);
         assert_eq!(capacity(a4, COMPAT, CHROME, &options(5000), 50), 1);
+    }
+
+    #[test]
+    fn fixed_columns_fill_at_least_one_row() {
+        let mut opts = options(330);
+        opts.cols = Some(5);
+        opts.max_cell = Some((960, 600));
+        let sheets = plan(5, 960.0 / 600.0, COMPAT, CHROME, &opts).unwrap();
+        assert_eq!(sheets.len(), 1);
+        assert_eq!((sheets[0].grid.cols, sheets[0].grid.rows), (5, 1));
+
+        let a4 = 1.0 / 1.414;
+        let mut opts = options(580);
+        opts.cols = Some(4);
+        assert!(capacity(a4, COMPAT, CHROME, &opts, 12) >= 4);
+        let sheets = plan(12, a4, COMPAT, CHROME, &opts).unwrap();
+        assert!(sheets.len() <= 3);
+        assert!(sheets.iter().all(|s| s.grid.cols == 4));
+    }
+
+    #[test]
+    fn fixed_rows_fill_at_least_one_column() {
+        let mut opts = options(5000);
+        opts.rows = Some(3);
+        assert_eq!(capacity(1.0, COMPAT, CHROME, &opts, 50), 3);
+        let mut opts = options(200);
+        opts.rows = Some(2);
+        let cap = capacity(1.0, COMPAT, CHROME, &opts, 50);
+        assert!(cap >= 4 && cap.is_multiple_of(2), "cap={cap}");
     }
 
     #[test]

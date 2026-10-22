@@ -28,7 +28,8 @@ because cells never grow beyond the source resolution.
 Explicit control:
 
 - `--per-sheet N` — items per sheet (overrides `--detail`)
-- `--cols N`, `--rows N` — fix the grid shape
+- `--cols N`, `--rows N` — fix the grid shape; a sheet holds at least one full row (or
+  column), even when that makes cells smaller than `--detail` would allow
 - `--max-sheets N` (default 10) — fail instead of writing more sheets
 
 Items are spread evenly: 10 items at 8 per sheet become 5 + 5, not 8 + 2.
@@ -64,8 +65,9 @@ their pixels and are not upscaled.
 ## Header
 
 A header line names the source, the range on the sheet and the sheet number, e.g.
-`deck.pdf · p.1–4 of 42 · sheet 1/11`. Replace it with `--title TEXT` or drop it with
-`--no-header`.
+`deck.pdf · p.1–4 of 42 · sheet 1/11`. On narrow sheets a long file name (or title) is
+shortened in the middle, so the range and sheet number stay visible. Replace it with
+`--title TEXT` or drop it with `--no-header`.
 
 ## Labels
 

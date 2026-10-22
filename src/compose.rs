@@ -6,7 +6,7 @@ use imageproc::rect::Rect;
 use crate::cli::LabelPos;
 use crate::color::is_dark;
 use crate::layout::{Chrome, Grid};
-use crate::text::{draw_text, fit_text, line_height, text_width};
+use crate::text::{draw_text, fit_middle, fit_text, line_height, text_width};
 
 pub const HEADER_SIZE: f32 = 17.0;
 
@@ -67,6 +67,33 @@ pub fn header_height(font: &FontArc) -> u32 {
     line_height(font, HEADER_SIZE) + 6
 }
 
+/// Header line: `name` (file name or `--title`) is shortened first so `details` stays readable.
+pub struct Header {
+    pub name: String,
+    /// Range, crop and sheet number, e.g. "p.1–4 of 42 · sheet 1/11".
+    pub details: String,
+}
+
+const SEPARATOR: &str = " · ";
+
+/// The header text that fits in `max_width`, shortening the name before the details.
+pub fn header_line(font: &FontArc, header: &Header, max_width: u32) -> String {
+    if header.details.is_empty() {
+        return fit_middle(font, HEADER_SIZE, &header.name, max_width);
+    }
+    let full = format!("{}{SEPARATOR}{}", header.name, header.details);
+    if text_width(font, HEADER_SIZE, &full) <= max_width {
+        return full;
+    }
+    let tail = format!("{SEPARATOR}{}", header.details);
+    let room = max_width.saturating_sub(text_width(font, HEADER_SIZE, &tail));
+    let name = fit_middle(font, HEADER_SIZE, &header.name, room);
+    if name.chars().count() > 1 {
+        return name + &tail;
+    }
+    fit_text(font, HEADER_SIZE, &full, max_width)
+}
+
 pub struct Cell {
     pub image: RgbaImage,
     pub label: Option<String>,
@@ -98,15 +125,14 @@ pub fn compose(
     chrome: Chrome,
     style: &Style,
     font: &FontArc,
-    header: Option<&str>,
+    header: Option<&Header>,
     cells: Vec<Cell>,
 ) -> (RgbaImage, Vec<CellRect>) {
     let (width, height) = grid.sheet_size(chrome);
     let mut canvas = RgbaImage::from_pixel(width, height, style.bg);
 
-    if let Some(text) = header {
-        let max_width = width.saturating_sub(2 * chrome.padding);
-        let text = fit_text(font, HEADER_SIZE, text, max_width);
+    if let Some(header) = header {
+        let text = header_line(font, header, width.saturating_sub(2 * chrome.padding));
         draw_text(
             &mut canvas,
             font,
@@ -239,5 +265,44 @@ fn fill_rect(canvas: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, co
             }
             pixel[3] = pixel[3].max(color[3]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text::load_font;
+
+    #[test]
+    fn header_keeps_range_and_sheet_number() {
+        let font = load_font(None).unwrap();
+        let header = Header {
+            name:
+                "2024_Annual_Financial_Report_of_the_Company_Final_Revised_v3_for_board_review.pdf"
+                    .to_string(),
+            details: "p.1–2 of 12 · sheet 1/6".to_string(),
+        };
+        let line = header_line(&font, &header, 520);
+        assert!(line.ends_with(" · p.1–2 of 12 · sheet 1/6"), "{line}");
+        assert!(line.contains('…') && line.contains(".pdf"), "{line}");
+        assert!(text_width(&font, HEADER_SIZE, &line) <= 520);
+
+        let short = Header {
+            name: "deck.pdf".to_string(),
+            details: "p.1–4 of 42".to_string(),
+        };
+        assert_eq!(header_line(&font, &short, 520), "deck.pdf · p.1–4 of 42");
+    }
+
+    #[test]
+    fn long_title_keeps_sheet_number() {
+        let font = load_font(None).unwrap();
+        let header = Header {
+            name: "A very long custom title that goes on and on describing the material".repeat(2),
+            details: "sheet 2/3".to_string(),
+        };
+        let line = header_line(&font, &header, 400);
+        assert!(line.ends_with(" · sheet 2/3"), "{line}");
+        assert!(text_width(&font, HEADER_SIZE, &line) <= 400);
     }
 }

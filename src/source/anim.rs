@@ -11,8 +11,9 @@ use image::{AnimationDecoder, Frames, RgbaImage};
 use super::{Item, ItemKey, LabelVars, fit_size};
 use crate::error::input;
 
-/// Browsers show frames with a delay of 10 ms or less for 100 ms; do the same so timestamps match.
-const MIN_DELAY_MS: f64 = 20.0;
+/// Browsers show GIF and APNG frames with a delay of 10 ms or less for 100 ms; do the same so
+/// timestamps match.
+const MAX_IGNORED_DELAY_MS: f64 = 10.0;
 const DEFAULT_DELAY_MS: f64 = 100.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +44,7 @@ impl AnimSource {
             size = frame.buffer().dimensions();
             starts.push(elapsed);
             let (num, den) = frame.delay().numer_denom_ms();
-            let mut delay = num as f64 / den.max(1) as f64;
-            if delay < MIN_DELAY_MS {
-                delay = DEFAULT_DELAY_MS;
-            }
-            elapsed += delay / 1000.0;
+            elapsed += frame_delay_ms(num, den) / 1000.0;
         }
         if starts.is_empty() {
             return Err(input(format!("{} contains no frames", path.display())).into());
@@ -131,6 +128,15 @@ impl AnimSource {
     }
 }
 
+fn frame_delay_ms(num: u32, den: u32) -> f64 {
+    let delay = num as f64 / den.max(1) as f64;
+    if delay <= MAX_IGNORED_DELAY_MS {
+        DEFAULT_DELAY_MS
+    } else {
+        delay
+    }
+}
+
 fn sniff_format(path: &Path) -> Result<AnimFormat> {
     let mut magic = [0u8; 4];
     File::open(path)
@@ -156,4 +162,18 @@ fn frames(path: &Path, format: AnimFormat) -> Result<Frames<'static>> {
             .map_err(invalid)?
             .into_frames(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_delays_follow_browsers() {
+        assert!((frame_delay_ms(1000, 60) - 16.667).abs() < 0.001);
+        assert_eq!(frame_delay_ms(20, 1), 20.0);
+        assert_eq!(frame_delay_ms(10, 1), 100.0);
+        assert_eq!(frame_delay_ms(0, 1), 100.0);
+        assert_eq!(frame_delay_ms(1000, 0), 1000.0);
+    }
 }

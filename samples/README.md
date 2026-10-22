@@ -27,5 +27,8 @@ write the command's stdout to `output.txt` instead, shown inline in `index.html`
 | `photos/` | mixed aspect ratios, natural sort (`img2` before `img10`), a 96x64 image that must not be upscaled, a JPEG with EXIF orientation 6 that must show "↑ TOP" upright |
 | `shots/` | 10 screenshots; `--per-sheet 8` must split them 5 + 5 |
 
+The `header-*` cases render narrow sheets with a long file name (a link to `report.pdf`)
+or title: the header must keep `p.1–2 of 12 · sheet 1/2` and shorten only the name.
+
 The PDFs are built from `sources/*.typ`. Add a case by adding a `case_` (render) or `text_case_` (other commands) line in `render.sh`
 and, if it needs a new input, a step in `generate.sh`.

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::cli::{Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs};
-use crate::compose::{Cell, Style, compose, header_height, place};
+use crate::compose::{Cell, Header, Style, compose, header_height, place};
 use crate::detect::detect;
 use crate::error::{CliError, input, usage};
 use crate::layout::{Chrome, Limits, PlanOptions, SheetPlan, capacity, plan, token_cost};
@@ -198,7 +198,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
                 layout.chrome,
                 &layout.style,
                 &layout.font,
-                header.as_deref(),
+                header.as_ref(),
                 cells,
             );
 
@@ -634,15 +634,14 @@ fn header_text(
     sheet_index: usize,
     sheet_count: usize,
     title: Option<&str>,
-) -> String {
+) -> Header {
     let sheet_part =
         (sheet_count > 1).then(|| format!("sheet {}/{}", sheet_index + 1, sheet_count));
     if let Some(title) = title {
-        return [Some(title.to_string()), sheet_part]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
+        return Header {
+            name: title.to_string(),
+            details: sheet_part.unwrap_or_default(),
+        };
     }
     let first = &items[sheet.start];
     let last = &items[sheet.start + sheet.len - 1];
@@ -694,11 +693,14 @@ fn header_text(
             round3(c.height)
         )
     });
-    [Some(name), Some(scope), crop_part, sheet_part]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+    Header {
+        name,
+        details: [Some(scope), crop_part, sheet_part]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · "),
+    }
 }
 
 fn page_of(item: &Item) -> String {

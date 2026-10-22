@@ -26,6 +26,7 @@ it, or via `GRIDITY_FFPROBE`. GIF and APNG are decoded without ffmpeg.
 and `--every`. Times past the end are an error (exit 2).
 
 For animations, each time maps to the frame visible at that moment; duplicates are merged.
+Frame timing follows browsers: a delay of 10 ms or less is shown for 100 ms.
 
 ## Labels
 

@@ -60,6 +60,10 @@ case_ pdf-report-high inputs/report.pdf --pages 1-4 --detail high
 case_ pdf-page-hires inputs/report.pdf --pages 3 --per-sheet 1 --preset hires
 case_ pdf-mixed inputs/mixed.pdf
 case_ pdf-dark inputs/mixed.pdf --bg "#1f2937" --title "Dark background"
+long_name=$out/2024_Annual_Financial_Report_of_the_Company_Final_Revised_v3_for_board_review.pdf
+ln -sf ../inputs/report.pdf "$long_name"
+case_ header-long-name "$long_name" --per-sheet 2 --cols 1 --pages 1-4
+case_ header-long-title inputs/report.pdf --per-sheet 2 --cols 1 --pages 1-4 --title "Quarterly board review of the annual financial report, final revised version three"
 case_ video-clip inputs/clip.mp4
 case_ video-range inputs/clip.mp4 --start 0:05 --end 0:15 --every 1s
 case_ video-label-below inputs/clip.mp4 --count 6 --label "{index}/{total} {time}" --label-pos below

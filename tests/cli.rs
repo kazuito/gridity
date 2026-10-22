@@ -655,6 +655,26 @@ fn missing_and_unknown_inputs_exit_3() {
 }
 
 #[test]
+fn jpeg_mentioning_pdf_is_an_image() {
+    let dir = TempDir::new().unwrap();
+    let mut jpeg = Vec::new();
+    JpegEncoder::new(&mut jpeg)
+        .encode_image(&RgbImage::from_pixel(64, 48, Rgb([200, 50, 50])))
+        .unwrap();
+    let comment = b"%PDF-1.4 mention";
+    let mut out = jpeg[..2].to_vec();
+    out.extend([0xFF, 0xFE]);
+    out.extend(((comment.len() + 2) as u16).to_be_bytes());
+    out.extend(comment);
+    out.extend(&jpeg[2..]);
+    let photo = dir.path().join("photo.jpg");
+    std::fs::write(&photo, out).unwrap();
+
+    let probe = run_json(&["probe", s(&photo)]);
+    assert_eq!(probe["source"]["kind"], "images");
+}
+
+#[test]
 fn dry_run_writes_nothing() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");
@@ -713,6 +733,40 @@ fn small_images_are_not_upscaled() {
 }
 
 #[test]
+fn fixed_columns_put_one_row_on_a_sheet() {
+    let dir = TempDir::new().unwrap();
+    let shots = dir.path().join("shots");
+    std::fs::create_dir(&shots).unwrap();
+    for i in 0..5 {
+        write_png(&shots.join(format!("shot{i}.png")), 960, 600, i * 40);
+    }
+    let manifest = run_json(&[
+        "render",
+        s(&shots),
+        "--cols",
+        "5",
+        "--detail",
+        "low",
+        "--dry-run",
+    ]);
+    let sheets = manifest["sheets"].as_array().unwrap();
+    assert_eq!(sheets.len(), 1);
+    assert_eq!(sheets[0]["cells"].as_array().unwrap().len(), 5);
+    assert_eq!(sheets[0]["grid"]["cols"], 5);
+
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0); 12]);
+    let manifest = run_json(&["render", s(&pdf), "--cols", "4", "--dry-run"]);
+    let sheets = manifest["sheets"].as_array().unwrap();
+    assert!(sheets.len() <= 3, "{} sheets", sheets.len());
+    assert!(
+        sheets
+            .iter()
+            .all(|s| s["cells"].as_array().unwrap().len() >= 4)
+    );
+}
+
+#[test]
 fn gif_frames_follow_requested_times() {
     let dir = TempDir::new().unwrap();
     let gif = dir.path().join("anim.gif");
@@ -745,6 +799,29 @@ fn gif_frames_follow_requested_times() {
         .args(["render", s(&gif), "--pages", "1"])
         .assert()
         .code(2);
+}
+
+#[test]
+fn fast_apng_keeps_its_duration() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let apng = dir.path().join("anim60.png");
+    let status = StdCommand::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc=size=64x64:rate=60:duration=2")
+        .args(["-plays", "0", "-f", "apng"])
+        .arg(&apng)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let probe = run_json(&["probe", s(&apng)]);
+    assert_eq!(probe["source"]["kind"], "anim");
+    assert_eq!(probe["source"]["frames"], 120);
+    let duration = probe["source"]["duration"].as_f64().unwrap();
+    assert!((duration - 2.0).abs() < 0.05, "duration {duration}");
 }
 
 #[test]

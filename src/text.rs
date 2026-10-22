@@ -45,6 +45,26 @@ pub fn fit_text(font: &FontArc, size: f32, text: &str, max_width: u32) -> String
     String::new()
 }
 
+/// Shortens `text` by replacing its middle with an ellipsis, keeping the end (e.g. a file extension).
+pub fn fit_middle(font: &FontArc, size: f32, text: &str, max_width: u32) -> String {
+    if text_width(font, size, text) <= max_width {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    for keep in (1..chars.len()).rev() {
+        let tail = keep / 3;
+        let candidate: String = chars[..keep - tail]
+            .iter()
+            .chain(std::iter::once(&'…'))
+            .chain(&chars[chars.len() - tail..])
+            .collect();
+        if text_width(font, size, &candidate) <= max_width {
+            return candidate;
+        }
+    }
+    String::new()
+}
+
 pub fn draw_text(
     canvas: &mut RgbaImage,
     font: &FontArc,
