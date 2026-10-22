@@ -66,4 +66,11 @@ mod tests {
         assert!(parse_color("#12345").is_err());
         assert!(parse_color("nope").is_err());
     }
+
+    proptest::proptest! {
+        #[test]
+        fn parsing_never_panics(text in "\\PC{0,24}") {
+            let _ = parse_color(&text);
+        }
+    }
 }

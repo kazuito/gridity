@@ -607,4 +607,36 @@ mod tests {
         glyphs.extend(line(&"b".repeat(20), 0.0, 200.0, 6.0));
         assert_eq!(summarize(&page(glyphs)).small_pt, Some(6.0));
     }
+
+    fn any_glyph() -> impl proptest::strategy::Strategy<Value = Glyph> {
+        use proptest::prelude::*;
+        let coordinate = -2000.0..2000.0f64;
+        (
+            (coordinate.clone(), coordinate.clone()),
+            (coordinate.clone(), coordinate),
+            0.0..200.0f64,
+            proptest::option::of("\\PC{0,3}"),
+        )
+            .prop_map(|(start, end, size, text)| Glyph {
+                start,
+                end,
+                size,
+                text,
+            })
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn any_glyphs_assemble_and_summarize(glyphs in proptest::collection::vec(any_glyph(), 0..60)) {
+            let _ = page_text(&glyphs);
+            let _ = assemble_text(&glyphs);
+            let summary = summarize(&PageScan {
+                width: 595.0,
+                height: 842.0,
+                glyphs,
+                ..PageScan::default()
+            });
+            proptest::prop_assert!((0.0..=1.0).contains(&summary.unmapped));
+        }
+    }
 }

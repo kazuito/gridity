@@ -159,4 +159,22 @@ mod tests {
         assert_eq!(kind_from_head(b"%PDF-2.0"), Some(InputKind::Pdf));
         assert_eq!(kind_from_head(b"hello"), None);
     }
+
+    proptest::proptest! {
+        #[test]
+        fn sniffing_never_panics(head in proptest::collection::vec(proptest::num::u8::ANY, 0..64)) {
+            let _ = kind_from_head(&head);
+        }
+
+        #[test]
+        fn apng_scan_never_panics(chunks in proptest::collection::vec(proptest::num::u8::ANY, 0..256)) {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = dir.path().join("x.png");
+            let mut bytes = PNG_SIGNATURE.to_vec();
+            bytes.extend([0x0D, 0x0A, 0x1A, 0x0A]);
+            bytes.extend(chunks);
+            std::fs::write(&path, bytes).unwrap();
+            let _ = is_apng(&path);
+        }
+    }
 }

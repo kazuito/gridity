@@ -442,4 +442,46 @@ mod tests {
         assert_eq!(sample_times(5.0, 5.0, &Sampling::Every(4.0)), vec![5.0]);
         assert_eq!(min_interval(&[0.0, 4.0, 1.0]), Some(1.0));
     }
+
+    proptest::proptest! {
+        #[test]
+        fn parsers_never_panic(spec in "\\PC{0,40}", total in 0usize..5000) {
+            let _ = parse_pages(&spec, total);
+            let _ = parse_time(&spec);
+            let _ = parse_crop(&spec);
+            let _ = Sampling::from_args(Some(&spec), None, None);
+            let _ = Sampling::from_args(None, None, Some(&spec));
+        }
+
+        #[test]
+        fn parsed_pages_are_unique_and_in_range(spec in "[-0-9, ]{0,24}", total in 1usize..300) {
+            if let Ok(pages) = parse_pages(&spec, total) {
+                let mut sorted = pages.clone();
+                sorted.sort();
+                sorted.dedup();
+                proptest::prop_assert_eq!(sorted.len(), pages.len());
+                proptest::prop_assert!(pages.iter().all(|p| (1..=total).contains(p)));
+            }
+        }
+
+        #[test]
+        fn times_are_finite_and_not_negative(spec in "[0-9.:hms-]{0,16}") {
+            if let Ok(seconds) = parse_time(&spec) {
+                proptest::prop_assert!(seconds.is_finite() && seconds >= 0.0);
+            }
+        }
+
+        #[test]
+        fn crops_stay_inside_the_image(
+            spec in "(0|1|0\\.[0-9]{1,3}),(0|1|0\\.[0-9]{1,3}),(0|1|0\\.[0-9]{1,3}),(0|1|0\\.[0-9]{1,3})",
+            w in 1u32..5000,
+            h in 1u32..5000,
+        ) {
+            if let Ok(crop) = parse_crop(&spec) {
+                let (x, y, cw, ch) = crop.pixels((w, h));
+                proptest::prop_assert!(cw >= 1 && ch >= 1);
+                proptest::prop_assert!(x + cw <= w && y + ch <= h);
+            }
+        }
+    }
 }
