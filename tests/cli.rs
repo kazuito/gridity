@@ -1486,3 +1486,19 @@ fn mcp_server_returns_sheets_as_images() {
             .contains("reason: not_found")
     );
 }
+
+#[test]
+fn characters_without_a_font_are_reported_once() {
+    let dir = TempDir::new().unwrap();
+    write_png(&dir.path().join("한국어.png"), 64, 48, 10);
+    write_png(&dir.path().join("日本語.png"), 64, 48, 90);
+    let manifest = run_json(&["render", s(dir.path()), "--dry-run"]);
+    let warnings = manifest["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let warning = warnings[0].as_str().unwrap();
+    assert!(
+        warning.contains("U+D55C") && warning.contains("--font"),
+        "{warning}"
+    );
+    assert!(!warning.contains('日'));
+}

@@ -30,5 +30,10 @@ write the command's stdout to `output.txt` instead, shown inline in `index.html`
 The `header-*` cases render narrow sheets with a long file name (a link to `report.pdf`)
 or title: the header must keep `p.1–2 of 12 · sheet 1/2` and shorten only the name.
 
+The `intl-*` cases label copies of a screenshot with Korean, Arabic, Thai, emoji and
+Simplified Chinese file names. With the embedded font they show boxes and a warning listing
+the characters; `intl-fallback-font` (macOS, Arial Unicode as `--font`) must draw all but
+the emoji. Arabic and Thai are not shaped.
+
 The PDFs are built from `sources/*.typ`. Add a case by adding a `case_` (render) or `text_case_` (other commands) line in `render.sh`
 and, if it needs a new input, a step in `generate.sh`.

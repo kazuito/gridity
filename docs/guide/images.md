@@ -23,6 +23,8 @@ gridity render screenshots/            # every image in the directory (not recur
 ## Labels
 
 Default `{name}` (file name) below each image. Variables: `{name}`, `{index}`, `{total}`.
+File names in scripts the embedded font lacks (Korean, Simplified Chinese, Arabic, Thai,
+emoji) produce a warning; add a font with `--font` (see `gridity guide layout`).
 
 ```sh
 gridity render shots/ --label "{index}/{total} {name}"

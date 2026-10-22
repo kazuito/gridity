@@ -1,4 +1,3 @@
-use ab_glyph::FontArc;
 use image::{Rgba, RgbaImage, imageops};
 use imageproc::drawing::draw_hollow_rect_mut;
 use imageproc::rect::Rect;
@@ -6,7 +5,7 @@ use imageproc::rect::Rect;
 use crate::cli::LabelPos;
 use crate::color::is_dark;
 use crate::layout::{Chrome, Grid};
-use crate::text::{draw_text, fit_middle, fit_text, line_height, text_width};
+use crate::text::{Fonts, draw_text, fit_middle, fit_text, line_height, text_width};
 
 pub const HEADER_SIZE: f32 = 17.0;
 
@@ -55,7 +54,7 @@ impl Style {
     }
 
     /// Height of the strip reserved under each cell for its label.
-    pub fn label_strip(&self, font: &FontArc) -> u32 {
+    pub fn label_strip(&self, font: &Fonts) -> u32 {
         match self.label_pos {
             Some(LabelPos::Below) => line_height(font, self.label_size) + 6,
             _ => 0,
@@ -63,7 +62,7 @@ impl Style {
     }
 }
 
-pub fn header_height(font: &FontArc) -> u32 {
+pub fn header_height(font: &Fonts) -> u32 {
     line_height(font, HEADER_SIZE) + 6
 }
 
@@ -77,7 +76,7 @@ pub struct Header {
 const SEPARATOR: &str = " · ";
 
 /// The header text that fits in `max_width`, shortening the name before the details.
-pub fn header_line(font: &FontArc, header: &Header, max_width: u32) -> String {
+pub fn header_line(font: &Fonts, header: &Header, max_width: u32) -> String {
     if header.details.is_empty() {
         return fit_middle(font, HEADER_SIZE, &header.name, max_width);
     }
@@ -124,7 +123,7 @@ pub fn compose(
     grid: Grid,
     chrome: Chrome,
     style: &Style,
-    font: &FontArc,
+    font: &Fonts,
     header: Option<&Header>,
     cells: Vec<Cell>,
 ) -> (RgbaImage, Vec<CellRect>) {
@@ -191,7 +190,7 @@ pub fn compose(
 #[allow(clippy::too_many_arguments)]
 fn draw_label_below(
     canvas: &mut RgbaImage,
-    font: &FontArc,
+    font: &Fonts,
     style: &Style,
     label: &str,
     x: u32,
@@ -220,7 +219,7 @@ fn draw_label_below(
 
 fn draw_label_overlay(
     canvas: &mut RgbaImage,
-    font: &FontArc,
+    font: &Fonts,
     style: &Style,
     label: &str,
     x: u32,
@@ -271,11 +270,10 @@ fn fill_rect(canvas: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::text::load_font;
 
     #[test]
     fn header_keeps_range_and_sheet_number() {
-        let font = load_font(None).unwrap();
+        let font = Fonts::load(&[]).unwrap();
         let header = Header {
             name:
                 "2024_Annual_Financial_Report_of_the_Company_Final_Revised_v3_for_board_review.pdf"
@@ -296,7 +294,7 @@ mod tests {
 
     #[test]
     fn long_title_keeps_sheet_number() {
-        let font = load_font(None).unwrap();
+        let font = Fonts::load(&[]).unwrap();
         let header = Header {
             name: "A very long custom title that goes on and on describing the material".repeat(2),
             details: "sheet 2/3".to_string(),

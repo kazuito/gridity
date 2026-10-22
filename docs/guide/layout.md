@@ -81,5 +81,10 @@ shortened in the middle, so the range and sheet number stay visible. Replace it 
 - `--no-label`
 - `--label-pos below|overlay` — below the cell, or a badge in its top-left corner
 - `--label-size PX` (15, 4-200), `--label-color COLOR`, `--label-bg COLOR`
-- `--font PATH` — TTF/OTF for header and labels (default: embedded BIZ UDGothic, which
-  covers Japanese)
+- `--font PATH` — TTF/OTF/TTC for header and labels; repeat it to add fallbacks. Each
+  character uses the first font that has it, then the embedded BIZ UDGothic (Japanese and
+  Latin). Characters no font has are drawn as boxes and listed in one warning; pass a font
+  that covers them, e.g. Noto Sans CJK SC/KR for Chinese or Korean, Noto Sans Arabic or
+  Thai, or `/System/Library/Fonts/Supplemental/Arial Unicode.ttf` on macOS. Text is not
+  shaped: Arabic letters are not joined and right-to-left text is drawn left to right.
+  Color emoji cannot be drawn.

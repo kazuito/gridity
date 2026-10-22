@@ -63,6 +63,14 @@ case_ pdf-dark inputs/mixed.pdf --bg "#1f2937" --title "Dark background"
 long_name=$out/2024_Annual_Financial_Report_of_the_Company_Final_Revised_v3_for_board_review.pdf
 ln -sf ../inputs/report.pdf "$long_name"
 case_ header-long-name "$long_name" --per-sheet 2 --cols 1 --pages 1-4
+intl=$out/.inputs/intl-names  # outside the case directories listed in index.html
+mkdir -p "$intl"
+for name in 한국어_화면 العربية ไทย emoji_🎉 简体中文_设置; do
+  cp inputs/shots/shot-01.png "$intl/$name.png"
+done
+case_ intl-default-font "$intl" --cols 5 --per-sheet 5
+fallback_font="/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+[[ -f $fallback_font ]] && case_ intl-fallback-font "$intl" --cols 5 --per-sheet 5 --font "$fallback_font"
 case_ header-long-title inputs/report.pdf --per-sheet 2 --cols 1 --pages 1-4 --title "Quarterly board review of the annual financial report, final revised version three"
 case_ video-clip inputs/clip.mp4
 case_ video-range inputs/clip.mp4 --start 0:05 --end 0:15 --every 1s

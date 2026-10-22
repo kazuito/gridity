@@ -37,7 +37,8 @@ src/
   select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
   compose.rs     draws a sheet: header, cells, borders, labels; place() positions images
-  text.rs        font loading (embedded BIZ UDGothic) and text drawing
+  text.rs        font fallback chain (--font files, then embedded BIZ UDGothic), text
+                 measuring and drawing; one layout path for both, no shaping
   output.rs      output paths (tmp dir + hash), encoding, JSON structs (serde + schemars),
                  SCHEMA_VERSION
   render.rs      `render` command: wires everything together; shared helpers for `probe`

@@ -4,8 +4,8 @@ all-features = false
 [advisories]
 version = 2
 ignore = [
-    # ttf-parser is unmaintained; it comes with ab_glyph, which must stay compatible with
-    # image/imageproc (AGENTS.md). Revisit when ab_glyph moves to another parser.
+    # ttf-parser is unmaintained; it comes with ab_glyph, which draws the labels. Revisit
+    # when ab_glyph moves to another parser or labels move to another font library.
     { id = "RUSTSEC-2026-0192", reason = "no maintained ab_glyph release yet" },
 ]
 

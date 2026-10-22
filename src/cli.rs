@@ -311,9 +311,10 @@ pub struct StyleArgs {
     #[arg(long, value_name = "COLOR", value_parser = parse_color, help_heading = "Style")]
     pub label_bg: Option<Rgba<u8>>,
 
-    /// TTF/OTF font for header and labels [default: embedded BIZ UDGothic]
+    /// TTF/OTF/TTC font for header and labels; repeat to add fallbacks. Each character uses
+    /// the first font that has it, then the embedded BIZ UDGothic (Japanese and Latin)
     #[arg(long, value_name = "PATH", help_heading = "Style")]
-    pub font: Option<PathBuf>,
+    pub font: Vec<PathBuf>,
 }
 
 fn parse_label_size(text: &str) -> Result<f32, String> {

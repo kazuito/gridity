@@ -1,7 +1,7 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use ab_glyph::FontArc;
 use anyhow::Result;
 
 use crate::cli::{Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs};
@@ -21,7 +21,7 @@ use crate::select::{
     sample_times,
 };
 use crate::source::{Item, ItemKey, Source, Warnings, file_name, fit_size};
-use crate::text::load_font;
+use crate::text::Fonts;
 
 /// Upper bound when estimating how many frames fit on one sheet.
 const MAX_CAPACITY: usize = 200;
@@ -95,7 +95,7 @@ pub struct Layout {
     pub limits: Limits,
     pub chrome: Chrome,
     pub style: Style,
-    pub font: FontArc,
+    pub font: Fonts,
     pub options: PlanOptions,
 }
 
@@ -190,6 +190,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     for warning in source.open_warnings() {
         warnings.push(warning);
     }
+    let mut missing_chars = BTreeSet::new();
     let mut sheet_infos = Vec::with_capacity(sheets.len());
     let mut written = Vec::new();
     if !args.dry_run {
@@ -212,6 +213,13 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
                 args.style.title.as_deref(),
             )
         });
+        let drawn_text = labels
+            .iter()
+            .flatten()
+            .chain(header.iter().flat_map(|h| [&h.name, &h.details]));
+        for text in drawn_text {
+            missing_chars.extend(layout.font.missing(text));
+        }
         let (width, height) = sheet.grid.sheet_size(layout.chrome);
         let boxes = vec![(sheet.grid.cell_width, sheet.grid.cell_height); sheet.len];
 
@@ -303,6 +311,16 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     if !args.dry_run {
         target.remove_stale(&written);
     }
+    if !missing_chars.is_empty() {
+        let listed: Vec<String> = missing_chars
+            .iter()
+            .map(|c| format!("{c} (U+{:04X})", *c as u32))
+            .collect();
+        warnings.push(format!(
+            "no font can draw {}; they appear as boxes. Pass --font with a font that has them",
+            listed.join(", ")
+        ));
+    }
     log("done".to_string());
 
     let manifest = Manifest {
@@ -323,7 +341,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
 }
 
 pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
-    let font = load_font(args.style.font.as_deref())?;
+    let font = Fonts::load(&args.style.font)?;
     let label_pos = (!args.style.no_label).then(|| {
         args.style
             .label_pos
