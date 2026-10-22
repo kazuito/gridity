@@ -4,6 +4,7 @@ use crate::error::{CliError, usage};
 /// Order is preserved and duplicates are dropped.
 pub fn parse_pages(spec: &str, total: usize) -> Result<Vec<usize>, CliError> {
     let mut pages = Vec::new();
+    let mut seen = vec![false; total + 1];
     for raw in spec.split(',') {
         let part = raw.trim();
         if part.is_empty() {
@@ -39,8 +40,9 @@ pub fn parse_pages(spec: &str, total: usize) -> Result<Vec<usize>, CliError> {
             ))
             .with_hint(format!("use --pages within 1-{total}")));
         }
-        for page in first..=last {
-            if !pages.contains(&page) {
+        for (page, seen) in seen.iter_mut().enumerate().take(last + 1).skip(first) {
+            if !*seen {
+                *seen = true;
                 pages.push(page);
             }
         }

@@ -1264,3 +1264,40 @@ fn passwords_come_from_a_file_stdin_or_the_environment() {
         .code(2)
         .stderr(predicate::str::contains("--password-file"));
 }
+
+#[test]
+fn long_pdfs_keep_every_page_in_order() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("long.pdf");
+    let pages: Vec<(u32, u32, u32, String)> = (1..=300)
+        .map(|i| {
+            (
+                595,
+                842,
+                0,
+                format!("BT /F1 12 Tf 72 720 Td (Page {i} body) Tj ET\n"),
+            )
+        })
+        .collect();
+    write_pdf_pages(&pdf, &pages);
+
+    let text = run_json(&["text", s(&pdf)]);
+    let texts = text["pages"].as_array().unwrap();
+    assert_eq!(texts.len(), 300);
+    for (i, page) in texts.iter().enumerate() {
+        assert_eq!(page["page"], i + 1);
+        assert_eq!(page["text"], format!("Page {} body", i + 1));
+    }
+
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    assert_eq!(probe["pages"].as_array().unwrap().len(), 300);
+
+    let manifest = run_json(&["render", s(&pdf), "--pages", "120,7,299", "--dry-run"]);
+    let cells: Vec<&Value> = manifest["sheets"][0]["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .collect();
+    let shown: Vec<u64> = cells.iter().map(|c| c["page"].as_u64().unwrap()).collect();
+    assert_eq!(shown, [120, 7, 299]);
+}

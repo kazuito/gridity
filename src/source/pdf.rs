@@ -27,8 +27,8 @@ use crate::select::Crop;
 
 pub struct PdfSource {
     pub path: PathBuf,
-    data: Arc<Vec<u8>>,
-    password: String,
+    /// Parsed once and shared by all workers; parsing per page made large documents quadratic.
+    pdf: Pdf,
     /// Rendered size of each page in PDF points, rotation applied.
     pub page_sizes: Vec<(f32, f32)>,
     pub title: Option<String>,
@@ -39,8 +39,7 @@ impl PdfSource {
         let data = Arc::new(
             std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?,
         );
-        let password = password.unwrap_or_default().to_string();
-        let pdf = load(&data, &password)?;
+        let pdf = load(&data, password.unwrap_or_default())?;
         let page_sizes: Vec<(f32, f32)> = pdf
             .pages()
             .iter()
@@ -57,8 +56,7 @@ impl PdfSource {
             .filter(|t| !t.trim().is_empty());
         Ok(PdfSource {
             path: path.to_path_buf(),
-            data,
-            password,
+            pdf,
             page_sizes,
             title,
         })
@@ -100,13 +98,12 @@ impl PdfSource {
         items
             .par_iter()
             .zip(boxes)
-            .map(|(item, &bounds)| {
+            .map_init(RenderCache::new, |cache, (item, &bounds)| {
                 let ItemKey::Page(index) = item.key else {
                     unreachable!("PDF items are pages")
                 };
                 let size = fit_size(item.aspect, bounds, None);
-                let (image, page_warnings) =
-                    render_page(&self.data, &self.password, index, size, item.crop)?;
+                let (image, page_warnings) = render_page(&self.pdf, cache, index, size, item.crop)?;
                 for warning in page_warnings {
                     warnings.push(format!("page {}: {}", index + 1, describe_warning(warning)));
                 }
@@ -119,7 +116,9 @@ impl PdfSource {
     pub fn scan(&self, pages: &[usize]) -> Result<Vec<PageScan>> {
         pages
             .par_iter()
-            .map(|&page| scan_page(&self.data, &self.password, page - 1))
+            .map_init(InterpreterCache::new, |cache, &page| {
+                scan_page(&self.pdf, cache, page - 1)
+            })
             .collect()
     }
 }
@@ -178,6 +177,12 @@ fn read_password_file(path: &Path) -> Result<String> {
     Ok(password.to_string())
 }
 
+// Workers share one `Pdf`; this fails to compile if hayro ever makes that unsound.
+const _: fn() = || {
+    fn shared_between_threads<T: Send + Sync>() {}
+    shared_between_threads::<Pdf>();
+};
+
 fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
     Pdf::new_with_password(data.clone(), password).map_err(|e| match e {
         LoadPdfError::Decryption(DecryptionError::PasswordProtected) if password.is_empty() => {
@@ -195,14 +200,13 @@ fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
 
 /// Renders one page, or its `crop` region, so it is exactly `size` pixels. Only the region is
 /// rasterized, so small crops stay cheap. hayro's borrowed types stay inside this function.
-fn render_page(
-    data: &Arc<Vec<u8>>,
-    password: &str,
+fn render_page<'a>(
+    pdf: &'a Pdf,
+    cache: &RenderCache<'a>,
     index: usize,
     size: (u32, u32),
     crop: Option<Crop>,
 ) -> Result<(RgbaImage, Vec<InterpreterWarning>)> {
-    let pdf = load(data, password)?;
     let page = &pdf.pages()[index];
     let (page_w, page_h) = page.render_dimensions();
     let crop = crop.unwrap_or(Crop {
@@ -232,7 +236,7 @@ fn render_page(
     let mut ctx = RenderContext::new(width, height);
     hayro::render_into(
         page,
-        &RenderCache::new(),
+        cache,
         &settings,
         &RenderSettings::default(),
         &mut ctx,
@@ -257,17 +261,15 @@ fn render_page(
 
 /// Interprets a page without rendering it and measures what is visible; hayro's borrowed types
 /// stay inside this function and `Collector`.
-fn scan_page(data: &Arc<Vec<u8>>, password: &str, index: usize) -> Result<PageScan> {
-    let pdf = load(data, password)?;
+fn scan_page<'a>(pdf: &'a Pdf, cache: &InterpreterCache<'a>, index: usize) -> Result<PageScan> {
     let page = &pdf.pages()[index];
     let (width, height) = page.render_dimensions();
     let transform = page.initial_transform(true).to_kurbo();
     let page_box = Rect::new(0.0, 0.0, width as f64, height as f64);
-    let cache = InterpreterCache::new();
     let mut context = PageContext::new(
         transform,
         page_box,
-        &cache,
+        cache,
         page.xref(),
         InterpreterSettings::default(),
     );
