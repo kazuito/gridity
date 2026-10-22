@@ -44,6 +44,7 @@ src/
 docs/guide/      user/agent documentation embedded into the binary
 tests/cli.rs     integration tests; fixtures are generated in temp dirs
 tests/fixtures/  committed fixtures that cannot be generated in Rust (encrypted.pdf)
+samples/         committed inputs for visual review; render.sh writes samples/out/ (gitignored)
 assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 ```
 
@@ -133,6 +134,8 @@ so the compat preset gives PDF 9/4/2, video 16/12/6 and images 12/6/3 items per 
   Assert on manifest fields, image dimensions and exit codes, not on pixels.
 - Put scratch fixtures and manual outputs under `target/manual/` (gitignored), never in
   the repo root.
+- `samples/` is for human review only; tests keep generating their own fixtures. Add a
+  `case_` to `samples/render.sh` when a change needs a new visual check.
 
 ## Manual verification
 
@@ -144,9 +147,10 @@ $G render <input> -v            # then open the printed path and inspect the ima
 $G render <input> --json        # check rects, labels, warnings
 ```
 
-When changing visuals, look at the rendered sheet for PDFs (including rotated and mixed
-page sizes), a 16:9 video, a rotated or non-square-pixel video, a small GIF, and a
-directory of images.
+When changing visuals, run `samples/render.sh` and look at `samples/out/index.html`. It
+covers PDFs (including rotated and mixed page sizes), a 16:9 video, a rotated and a
+non-square-pixel video, a small GIF, an APNG and directories of images
+(`samples/README.md` lists what each input checks).
 
 ## Git
 
