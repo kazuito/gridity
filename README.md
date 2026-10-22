@@ -28,10 +28,22 @@ cargo install --path .
 Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
 `--ffmpeg` / `GRIDITY_FFMPEG`. PDFs, images, GIF and APNG need nothing else.
 
+## MCP server
+
+`gridity mcp` exposes `render`, `probe`, `text` and `guide` as Model Context Protocol
+tools; `render` returns the sheets as images.
+
+```sh
+claude mcp add gridity -- gridity mcp
+```
+
+See `gridity guide mcp` for other clients, parameters and limits.
+
 ## Documentation
 
 `gridity guide [topic]` prints the bundled guide (`docs/guide/*.md`):
-`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`.
+`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`, `mcp`. JSON Schemas of
+every JSON output are in [`docs/schema/`](docs/schema/).
 
 ## License
 

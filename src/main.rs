@@ -6,6 +6,7 @@ mod error;
 mod extract;
 mod guide;
 mod layout;
+mod mcp;
 mod output;
 mod pagetext;
 mod probe;
@@ -33,10 +34,11 @@ fn main() -> ExitCode {
         Command::Render(args) => args.json,
         Command::Probe(args) => args.json,
         Command::Text(args) => args.json,
-        Command::Guide(_) => false,
+        Command::Guide(_) | Command::Mcp(_) => false,
     };
     configure_threads(match &cli.command {
         Command::Render(args) => args.jobs,
+        Command::Mcp(args) => args.jobs,
         _ => None,
     });
 
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
         Command::Probe(args) => probe::run(args),
         Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
+        Command::Mcp(args) => mcp::run(args),
     }))
     .unwrap_or_else(|panic| {
         Err(CliError::new(

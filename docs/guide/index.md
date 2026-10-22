@@ -12,6 +12,7 @@ limits. Read one sheet instead of taking many screenshots.
 | `gridity text <PDF>` | Visible text of each page and whether the page needs to be seen |
 | `gridity render <INPUT>... [OPTIONS]` | Write sheets; prints their absolute paths |
 | `gridity guide [TOPIC]` | This documentation |
+| `gridity mcp` | Serve these commands as MCP tools (`gridity guide mcp`) |
 
 ## Typical workflow
 
@@ -47,4 +48,5 @@ that change their meaning; read formulas from the page images.
 - `gridity guide images` — files and directories
 - `gridity guide layout` — presets, detail, grid and style options
 - `gridity guide output` — file locations, JSON manifest schema, exit codes
+- `gridity guide mcp` — `gridity mcp`, the MCP server for clients without a shell
 - `gridity guide all` — everything at once

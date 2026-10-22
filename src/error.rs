@@ -42,6 +42,8 @@ pub enum Reason {
     DoesNotFit,
     OutsideMedia,
     UnknownTopic,
+    OutsideRoot,
+    TooLarge,
     NotFound,
     UnknownType,
     WrongType,
@@ -65,7 +67,7 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 30] = [
+    pub const ALL: [Reason; 32] = [
         Reason::InvalidArgument,
         Reason::InvalidValue,
         Reason::PageOutOfRange,
@@ -76,6 +78,8 @@ impl Reason {
         Reason::DoesNotFit,
         Reason::OutsideMedia,
         Reason::UnknownTopic,
+        Reason::OutsideRoot,
+        Reason::TooLarge,
         Reason::NotFound,
         Reason::UnknownType,
         Reason::WrongType,
@@ -110,6 +114,8 @@ impl Reason {
             Reason::DoesNotFit => "does_not_fit",
             Reason::OutsideMedia => "outside_media",
             Reason::UnknownTopic => "unknown_topic",
+            Reason::OutsideRoot => "outside_root",
+            Reason::TooLarge => "too_large",
             Reason::NotFound => "not_found",
             Reason::UnknownType => "unknown_type",
             Reason::WrongType => "wrong_type",

@@ -122,6 +122,8 @@ gets:
 | `does_not_fit` | usage | `--per-sheet` / `--cols` / `--rows` cannot fit within the size limits |
 | `outside_media` | usage | `--start`, `--end` or `--at` outside the media |
 | `unknown_topic` | usage | `gridity guide` topic that does not exist |
+| `outside_root` | usage | MCP server: a path outside the directories given with `--root` |
+| `too_large` | usage | MCP server: the sheets are too large to return in one result |
 | `not_found` | input | the input path does not exist |
 | `unknown_type` | input | the input type cannot be detected (pass `--type`) |
 | `wrong_type` | input | the input is not of the required type (`text` needs a PDF) |

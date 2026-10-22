@@ -46,6 +46,9 @@ src/
   extract.rs     `text` command: visible PDF text per page with its content type
   pagetext.rs    pure page analysis: text assembly, text sizes, coverage, content type
   guide.rs       `guide` command: include_str! of docs/guide/*.md
+  mcp.rs         `mcp` command: synchronous JSON-RPC over stdin/stdout; tool parameters
+                 become CLI arguments parsed by clap, then render::execute / probe::report /
+                 extract::report
   source/
     mod.rs       Item, ItemKey, LabelVars, enum Source, fit_size(), Warnings
     pdf.rs       hayro renderer (`render_page`) and page scanner (`scan_page`, `Collector`)
@@ -90,7 +93,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
   `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
-  printed as `{"error": {...}}` on stdout.
+  printed as `{"error": {...}}` on stdout. For `mcp`, stdout carries only JSON-RPC
+  messages, one per line; nothing reached from a tool call may print to stdout.
 - **JSON is versioned and typed.** Every JSON document is a serde struct (no `json!`) with
   `schema_version` first. Adding a field keeps `SCHEMA_VERSION`; removing, renaming or
   retyping one raises it. `docs/schema/*.schema.json` are generated from the structs; after

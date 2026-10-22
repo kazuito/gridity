@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use clap::builder::RangedU64ValueParser;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::Rgba;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::color::parse_color;
 use crate::layout::MAX_SHEETS;
@@ -55,9 +57,12 @@ pub enum Command {
     Text(TextArgs),
     /// Print usage documentation for agents (Markdown)
     Guide(GuideArgs),
+    /// Serve render, probe, text and guide as MCP tools over stdin/stdout
+    Mcp(McpArgs),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum InputKind {
     Pdf,
     Video,
@@ -66,7 +71,8 @@ pub enum InputKind {
     Images,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Preset {
     /// Long edge <= 1568px and <= 1568 visual tokens (works with every Claude model)
     Compat,
@@ -74,7 +80,8 @@ pub enum Preset {
     Hires,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Detail {
     /// More items per sheet, smaller cells
     Low,
@@ -83,7 +90,8 @@ pub enum Detail {
     High,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Format {
     Png,
     Jpeg,
@@ -361,6 +369,18 @@ pub struct TextArgs {
     /// Print JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct McpArgs {
+    /// Only accept inputs (and password files) inside this directory; repeatable
+    /// [default: any path the user can read]
+    #[arg(long, value_name = "DIR")]
+    pub root: Vec<PathBuf>,
+
+    /// Number of parallel workers, 1-256 [default: min(CPU cores, 8)]
+    #[arg(short, long, value_name = "N", value_parser = RangedU64ValueParser::<usize>::new().range(1..=256))]
+    pub jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone, Args)]

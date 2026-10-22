@@ -1426,3 +1426,63 @@ fn errors_carry_a_reason() {
     let body: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["error"]["reason"], "tool_missing");
 }
+
+#[test]
+fn mcp_server_returns_sheets_as_images() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0); 3]);
+    let messages = [
+        serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                       "clientInfo": {"name": "test", "version": "0"}}}),
+        serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "render", "arguments": {"inputs": [s(&pdf)], "pages": "-2"}}}),
+        serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"name": "text", "arguments": {"input": s(&dir.path().join("none.pdf"))}}}),
+    ];
+    let stdin: String = messages.iter().map(|m| format!("{m}\n")).collect();
+    let output = gridity().arg("mcp").write_stdin(stdin).output().unwrap();
+    assert!(output.status.success());
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let ids: Vec<i64> = responses
+        .iter()
+        .map(|r| r["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(ids, [1, 2, 3, 4]);
+    assert_eq!(responses[0]["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 4);
+
+    let render = &responses[2]["result"];
+    assert_eq!(render["isError"], false);
+    let manifest = &render["structuredContent"];
+    assert_eq!(manifest["sheets"].as_array().unwrap().len(), 1);
+    let cells: Vec<u64> = manifest["sheets"][0]["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["page"].as_u64().unwrap())
+        .collect();
+    assert_eq!(cells, [1, 2]);
+    let content = render["content"].as_array().unwrap();
+    assert!(content[0]["text"].as_str().unwrap().contains("\"rect\""));
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["mimeType"], "image/png");
+    assert!(content[1]["data"].as_str().unwrap().starts_with("iVBOR"));
+
+    let text = &responses[3]["result"];
+    assert_eq!(text["isError"], true);
+    assert!(text.get("structuredContent").is_none());
+    assert!(
+        text["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("reason: not_found")
+    );
+}

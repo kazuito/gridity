@@ -1,4 +1,4 @@
-use crate::error::{Reason, usage};
+use crate::error::{CliError, Reason, usage};
 
 const TOPICS: &[(&str, &str)] = &[
     ("index", include_str!("../docs/guide/index.md")),
@@ -9,13 +9,20 @@ const TOPICS: &[(&str, &str)] = &[
     ("images", include_str!("../docs/guide/images.md")),
     ("layout", include_str!("../docs/guide/layout.md")),
     ("output", include_str!("../docs/guide/output.md")),
+    ("mcp", include_str!("../docs/guide/mcp.md")),
 ];
 
 pub fn run(topic: Option<&str>) -> anyhow::Result<()> {
+    println!("{}", text(topic)?);
+    Ok(())
+}
+
+/// The Markdown of one topic, the index when `None`, or every topic for "all".
+pub fn text(topic: Option<&str>) -> Result<String, CliError> {
     match topic.unwrap_or("index") {
         "all" => {
             let all: Vec<&str> = TOPICS.iter().map(|(_, text)| text.trim_end()).collect();
-            println!("{}", all.join("\n\n---\n\n"));
+            Ok(all.join("\n\n---\n\n"))
         }
         name => {
             let (_, text) = TOPICS.iter().find(|(n, _)| *n == name).ok_or_else(|| {
@@ -26,8 +33,7 @@ pub fn run(topic: Option<&str>) -> anyhow::Result<()> {
                 )
                 .with_hint(format!("topics: {}, all", names.join(", ")))
             })?;
-            println!("{}", text.trim_end());
+            Ok(text.trim_end().to_string())
         }
     }
-    Ok(())
 }
