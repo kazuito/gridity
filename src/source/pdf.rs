@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use super::{Item, ItemKey, LabelVars, Rendered, Warnings, fit_size};
 use crate::cli::PasswordArgs;
-use crate::error::{CliError, input, usage};
+use crate::error::{CliError, Reason, input, usage};
 use crate::pagetext::{BBox, Glyph, PageScan};
 use crate::select::Crop;
 
@@ -46,7 +46,7 @@ impl PdfSource {
             .map(|page| page.render_dimensions())
             .collect();
         if page_sizes.is_empty() {
-            return Err(input(format!("{} has no pages", path.display())).into());
+            return Err(input(Reason::NoPages, format!("{} has no pages", path.display())).into());
         }
         let title = pdf
             .metadata()
@@ -138,9 +138,11 @@ pub fn resolve_password(args: &PasswordArgs) -> Result<Option<String>> {
     match std::env::var(PASSWORD_ENV) {
         Ok(password) if !password.is_empty() => Ok(Some(password)),
         Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(usage(format!("{PASSWORD_ENV} is not valid UTF-8")).into())
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(usage(
+            Reason::InvalidValue,
+            format!("{PASSWORD_ENV} is not valid UTF-8"),
+        )
+        .into()),
     }
 }
 
@@ -156,20 +158,27 @@ fn read_password_file(path: &Path) -> Result<String> {
             .and_then(|f| f.take(MAX_PASSWORD_FILE_BYTES + 1).read_to_end(&mut bytes))
     };
     read.map_err(|e| {
-        input(format!(
-            "cannot read the password file {}: {e}",
-            path.display()
-        ))
+        input(
+            Reason::Unreadable,
+            format!("cannot read the password file {}: {e}", path.display()),
+        )
     })?;
     if bytes.len() as u64 > MAX_PASSWORD_FILE_BYTES {
-        return Err(usage(format!(
-            "the password file {} is larger than {MAX_PASSWORD_FILE_BYTES} bytes",
-            path.display()
-        ))
+        return Err(usage(
+            Reason::InvalidValue,
+            format!(
+                "the password file {} is larger than {MAX_PASSWORD_FILE_BYTES} bytes",
+                path.display()
+            ),
+        )
         .into());
     }
-    let text = String::from_utf8(bytes)
-        .map_err(|_| usage(format!("the password file {} is not UTF-8", path.display())))?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        usage(
+            Reason::InvalidValue,
+            format!("the password file {} is not UTF-8", path.display()),
+        )
+    })?;
     let password = text
         .strip_suffix("\r\n")
         .or_else(|| text.strip_suffix('\n'))
@@ -186,15 +195,15 @@ const _: fn() = || {
 fn load(data: &Arc<Vec<u8>>, password: &str) -> Result<Pdf, CliError> {
     Pdf::new_with_password(data.clone(), password).map_err(|e| match e {
         LoadPdfError::Decryption(DecryptionError::PasswordProtected) if password.is_empty() => {
-            input("the PDF is password-protected").with_hint(format!(
+            input(Reason::PasswordRequired, "the PDF is password-protected").with_hint(format!(
                 "pass --password-file <FILE> or set {PASSWORD_ENV}; avoid --password, which other processes can see"
             ))
         }
         LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
-            input("the PDF password is incorrect")
+            input(Reason::PasswordIncorrect, "the PDF password is incorrect")
         }
-        LoadPdfError::Decryption(other) => input(format!("cannot decrypt the PDF ({other:?})")),
-        LoadPdfError::Invalid => input("the file is not a valid PDF or is damaged"),
+        LoadPdfError::Decryption(other) => input(Reason::DecryptFailed, format!("cannot decrypt the PDF ({other:?})")),
+        LoadPdfError::Invalid => input(Reason::InvalidPdf, "the file is not a valid PDF or is damaged"),
     })
 }
 

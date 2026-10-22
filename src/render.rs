@@ -3,18 +3,18 @@ use std::time::Instant;
 
 use ab_glyph::FontArc;
 use anyhow::Result;
-use serde_json::json;
 
 use crate::cli::{Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs};
 use crate::compose::{Cell, Header, Style, compose, header_height, place};
 use crate::detect::detect;
-use crate::error::{CliError, input, usage};
+use crate::error::{CliError, Reason, input, usage};
 use crate::layout::{
     Chrome, Limits, PlanOptions, SheetPlan, capacity, check_sheets, plan, token_cost,
 };
 use crate::output::{
-    CellInfo, LimitsInfo, MANY_IMAGES_MAX_EDGE, MAX_BASE64_BYTES, Manifest, SheetInfo, Target,
-    base64_len, encode, format_from_extension, write_atomic,
+    CellInfo, FileInfo, LimitsInfo, MANY_IMAGES_MAX_EDGE, MAX_BASE64_BYTES, Manifest,
+    PageSizeGroup, SCHEMA_VERSION, SheetInfo, SourceInfo, Target, base64_len, encode,
+    format_from_extension, write_atomic,
 };
 use crate::select::{
     Crop, Sampling, format_time, min_interval, parse_crop, parse_pages, parse_time, sample_count,
@@ -100,6 +100,37 @@ pub struct Layout {
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
+    let (json, dry_run, quiet) = (args.json, args.dry_run, args.quiet);
+    let rendered = execute(args)?;
+    let manifest = &rendered.manifest;
+    if !quiet {
+        for warning in &manifest.warnings {
+            eprintln!("warning: {warning}");
+        }
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(manifest)?);
+    } else if dry_run {
+        print_dry_run(manifest, rendered.item_count);
+    } else {
+        for sheet in &manifest.sheets {
+            if let Some(path) = &sheet.path {
+                println!("{path}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What a render produced: the manifest and the number of selected items.
+pub struct RenderOutcome {
+    pub manifest: Manifest,
+    pub item_count: usize,
+}
+
+/// Plans and (unless `--dry-run`) writes the sheets without printing to stdout; `-v` progress
+/// still goes to stderr.
+pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     let started = Instant::now();
     let log = |message: String| {
         if args.verbose {
@@ -274,14 +305,8 @@ pub fn run(args: RenderArgs) -> Result<()> {
     }
     log("done".to_string());
 
-    let warnings = warnings.take();
-    if !args.quiet {
-        for warning in &warnings {
-            eprintln!("warning: {warning}");
-        }
-    }
-
     let manifest = Manifest {
+        schema_version: SCHEMA_VERSION,
         source: source_info(&source, false),
         limits: LimitsInfo {
             preset: preset_name(args.layout.preset).to_string(),
@@ -289,20 +314,12 @@ pub fn run(args: RenderArgs) -> Result<()> {
             max_tokens: layout.limits.max_tokens,
         },
         sheets: sheet_infos,
-        warnings,
+        warnings: warnings.take(),
     };
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&manifest)?);
-    } else if args.dry_run {
-        print_dry_run(&manifest, items.len());
-    } else {
-        for sheet in &manifest.sheets {
-            if let Some(path) = &sheet.path {
-                println!("{path}");
-            }
-        }
-    }
-    Ok(())
+    Ok(RenderOutcome {
+        manifest,
+        item_count: items.len(),
+    })
 }
 
 pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
@@ -345,7 +362,11 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
     if let (Some(n), Some(c), Some(r)) = (options.per_sheet, options.cols, options.rows)
         && n > (c * r) as usize
     {
-        return Err(usage(format!("--per-sheet {n} does not fit in a {c}x{r} grid")).into());
+        return Err(usage(
+            Reason::DoesNotFit,
+            format!("--per-sheet {n} does not fit in a {c}x{r} grid"),
+        )
+        .into());
     }
     Ok(Layout {
         limits,
@@ -389,11 +410,14 @@ fn check_flags(kind: InputKind, args: &RenderArgs) -> Result<(), CliError> {
     if offending.is_empty() {
         return Ok(());
     }
-    Err(usage(format!(
-        "{} cannot be used with {} input",
-        offending.join(", "),
-        kind_name(kind)
-    ))
+    Err(usage(
+        Reason::FlagNotForInput,
+        format!(
+            "{} cannot be used with {} input",
+            offending.join(", "),
+            kind_name(kind)
+        ),
+    )
     .with_hint(format!("see: gridity guide {}", guide_topic(kind))))
 }
 
@@ -415,10 +439,13 @@ fn validate_template(template: &str, kind: InputKind) -> Result<(), CliError> {
         };
         let name = &after[..close];
         if !allowed.contains(&name) {
-            return Err(usage(format!(
-                "label variable {{{name}}} is not available for {} input",
-                kind_name(kind)
-            ))
+            return Err(usage(
+                Reason::LabelVariableNotForInput,
+                format!(
+                    "label variable {{{name}}} is not available for {} input",
+                    kind_name(kind)
+                ),
+            )
             .with_hint(format!(
                 "available: {}",
                 allowed
@@ -506,9 +533,10 @@ fn select_uncropped(
                 select_range(sel, Some(anim.duration), one_sheet(anim.aspect()))?;
             let count = sample_count(start, end, &sampling);
             if count > MAX_ANIM_SAMPLES {
-                return Err(usage(format!(
-                    "the selection takes {count} timestamps, more than {MAX_ANIM_SAMPLES}"
-                ))
+                return Err(usage(
+                    Reason::TooManySamples,
+                    format!("the selection takes {count} timestamps, more than {MAX_ANIM_SAMPLES}"),
+                )
                 .with_hint("use a longer --every or a smaller --count")
                 .into());
             }
@@ -561,34 +589,43 @@ fn select_range(
 
     let end = match (end, duration) {
         (Some(end), Some(d)) if end > d + 0.5 => {
-            return Err(usage(format!(
-                "--end {} is past the end of the media ({})",
-                format_time(end, false, false),
-                format_time(d, false, false)
-            )));
+            return Err(usage(
+                Reason::OutsideMedia,
+                format!(
+                    "--end {} is past the end of the media ({})",
+                    format_time(end, false, false),
+                    format_time(d, false, false)
+                ),
+            ));
         }
         (Some(end), Some(d)) => end.min(d),
         (Some(end), None) => end,
         (None, Some(d)) => d,
         (None, None) if matches!(sampling, Sampling::At(_)) => f64::INFINITY,
         (None, None) => {
-            return Err(
-                input("the duration of the media is unknown").with_hint("pass --end or --at")
-            );
+            return Err(input(
+                Reason::UnknownDuration,
+                "the duration of the media is unknown",
+            )
+            .with_hint("pass --end or --at"));
         }
     };
     if start >= end {
         return Err(usage(
+            Reason::OutsideMedia,
             "--start must be before --end and the end of the media",
         ));
     }
     if let Sampling::At(times) = &sampling
         && let Some(&bad) = times.iter().find(|&&t| t < start || t > end)
     {
-        return Err(usage(format!(
-            "--at {} is outside the selected range or the media",
-            format_time(bad, false, true)
-        )));
+        return Err(usage(
+            Reason::OutsideMedia,
+            format!(
+                "--at {} is outside the selected range or the media",
+                format_time(bad, false, true)
+            ),
+        ));
     }
     Ok((start, end, sampling))
 }
@@ -761,62 +798,52 @@ fn time_of(item: &Item) -> String {
     item.vars.time.clone().unwrap_or_default()
 }
 
-pub fn source_info(source: &Source, detailed: bool) -> serde_json::Value {
+pub fn source_info(source: &Source, detailed: bool) -> SourceInfo {
     match source {
-        Source::Pdf(pdf) => {
-            let mut info = json!({
-                "kind": "pdf",
-                "path": absolute(&pdf.path),
-                "pages": pdf.page_count(),
-            });
-            if let Some(title) = &pdf.title {
-                info["title"] = json!(title);
-            }
-            if detailed {
-                info["page_sizes"] = json!(page_size_groups(&pdf.page_sizes));
-            }
-            info
-        }
-        Source::Video(video) => json!({
-            "kind": "video",
-            "path": absolute(&video.path),
-            "duration": video.duration.map(round3),
-            "width": video.display.0,
-            "height": video.display.1,
-            "coded_width": video.coded.0,
-            "coded_height": video.coded.1,
-            "rotation": video.rotation,
-            "fps": video.fps.map(round3),
-            "codec": video.codec,
-        }),
-        Source::Anim(anim) => json!({
-            "kind": "anim",
-            "path": absolute(&anim.path),
-            "frames": anim.starts.len(),
-            "duration": round3(anim.duration),
-            "width": anim.size.0,
-            "height": anim.size.1,
-        }),
-        Source::Images(images) => {
-            let mut info = json!({
-                "kind": "images",
-                "name": images.name,
-                "count": images.files.len(),
-            });
-            if detailed {
-                info["files"] = json!(images
+        Source::Pdf(pdf) => SourceInfo::Pdf {
+            path: absolute(&pdf.path),
+            pages: pdf.page_count(),
+            title: pdf.title.clone(),
+            page_sizes: detailed.then(|| page_size_groups(&pdf.page_sizes)),
+        },
+        Source::Video(video) => SourceInfo::Video {
+            path: absolute(&video.path),
+            duration: video.duration.map(round3),
+            width: video.display.0,
+            height: video.display.1,
+            coded_width: video.coded.0,
+            coded_height: video.coded.1,
+            rotation: video.rotation,
+            fps: video.fps.map(round3),
+            codec: video.codec.clone(),
+        },
+        Source::Anim(anim) => SourceInfo::Anim {
+            path: absolute(&anim.path),
+            frames: anim.starts.len(),
+            duration: round3(anim.duration),
+            width: anim.size.0,
+            height: anim.size.1,
+        },
+        Source::Images(images) => SourceInfo::Images {
+            name: images.name.clone(),
+            count: images.files.len(),
+            files: detailed.then(|| {
+                images
                     .files
                     .iter()
-                    .map(|f| json!({"path": absolute(&f.path), "width": f.size.0, "height": f.size.1}))
-                    .collect::<Vec<_>>());
-            }
-            info
-        }
+                    .map(|f| FileInfo {
+                        path: absolute(&f.path),
+                        width: f.size.0,
+                        height: f.size.1,
+                    })
+                    .collect()
+            }),
+        },
     }
 }
 
-/// Groups consecutive pages of the same size, e.g. 595x842 pt for pages "1-12".
-fn page_size_groups(sizes: &[(f32, f32)]) -> Vec<serde_json::Value> {
+/// Groups pages of the same size, e.g. 595x842 pt for pages "1-12".
+fn page_size_groups(sizes: &[(f32, f32)]) -> Vec<PageSizeGroup> {
     let mut groups: Vec<((u32, u32), Vec<usize>)> = Vec::new();
     for (i, &(w, h)) in sizes.iter().enumerate() {
         let key = (w.round() as u32, h.round() as u32);
@@ -827,14 +854,12 @@ fn page_size_groups(sizes: &[(f32, f32)]) -> Vec<serde_json::Value> {
     }
     groups
         .into_iter()
-        .map(|((w, h), pages)| {
-            json!({
-                "width_pt": w,
-                "height_pt": h,
-                "orientation": if w > h { "landscape" } else { "portrait" },
-                "count": pages.len(),
-                "pages": compact_ranges(&pages),
-            })
+        .map(|((w, h), pages)| PageSizeGroup {
+            width_pt: w,
+            height_pt: h,
+            orientation: if w > h { "landscape" } else { "portrait" }.to_string(),
+            count: pages.len(),
+            pages: compact_ranges(&pages),
         })
         .collect()
 }

@@ -1,11 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
-use serde_json::{Value, json};
+use schemars::JsonSchema;
+use serde::Serialize;
 
 use crate::cli::{Cli, Command, Detail, InputKind, Preset, ProbeArgs, RenderArgs};
 use crate::detect::detect;
-use crate::error::usage;
+use crate::error::{Reason, usage};
 use crate::layout::{capacity, plan};
+use crate::output::{SCHEMA_VERSION, SourceInfo};
 use crate::pagetext::{
     Content, PageSummary, READABLE_PX, SKIMMABLE_PX, document_body_pt, summarize,
 };
@@ -24,10 +26,74 @@ const DETAILS: [(Detail, &str); 3] = [
     (Detail::High, "high"),
 ];
 
+/// `probe --json`.
+#[derive(Serialize, JsonSchema)]
+pub struct ProbeReport {
+    pub schema_version: u32,
+    pub source: SourceInfo,
+    pub preset: String,
+    pub estimates: Vec<Estimate>,
+    /// Ready-to-run commands; heuristic starting points.
+    pub suggestions: Vec<String>,
+    /// Median body text size over the measured pages (PDF).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_text_pt: Option<f64>,
+    /// Every page with `--per-page` (PDF).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<Vec<PageReport>>,
+    pub warnings: Vec<String>,
+}
+
+/// Sheets and scale for one `--detail` level, as a plain `gridity render` would plan them.
+#[derive(Serialize, JsonSchema)]
+pub struct Estimate {
+    pub detail: String,
+    pub per_sheet: usize,
+    /// Sheets for every page or image; absent for video and animations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sheets: Option<usize>,
+    /// Sheet pixels per PDF point, or displayed / native pixels.
+    pub scale: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_12pt_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_text_px: Option<f64>,
+    /// Scale when only the pages worth rendering are rendered (`--per-page`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual_scale: Option<f64>,
+    /// Set on the detail level `render` uses by default.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub default: bool,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct PageReport {
+    pub page: usize,
+    #[serde(flatten)]
+    pub summary: PageSummary,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 pub fn run(args: ProbeArgs) -> Result<()> {
+    let json = args.json;
+    let report = report(args)?;
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_text(&report);
+    }
+    Ok(())
+}
+
+pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
     let kind = detect(&args.inputs, args.kind)?;
     let source = Source::open(kind, &args.inputs, &args.source)?;
-    let info = crate::render::source_info(&source, true);
     let (count, shapes) = item_shapes(&source);
     let aspect = median_aspect(&shapes);
     let pages = page_summaries(&source, args.per_page)?;
@@ -53,70 +119,40 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         layout.options.max_cell = native_bounds(&source);
         layout.options.max_sheets = usize::MAX;
         let per_sheet = capacity(aspect, layout.limits, layout.chrome, &layout.options, 200);
-        let mut estimate = json!({ "detail": name, "per_sheet": per_sheet });
-        if let Some(count) = count {
-            estimate["sheets"] = json!(count.div_ceil(per_sheet));
-        }
         let scale = sheet_scale(&layout, count.unwrap_or(per_sheet), &shapes)?;
-        estimate["scale"] = json!(round3(scale));
-        if kind == InputKind::Pdf {
-            estimate["text_12pt_px"] = json!(round1(12.0 * scale));
-        }
-        if let Some(body) = body_pt {
-            estimate["body_text_px"] = json!(round1(body * scale));
-        }
-        if let Some(shapes) = &visual_shapes {
-            estimate["visual_scale"] = json!(round3(sheet_scale(&layout, shapes.len(), shapes)?));
-        }
-        if detail == Detail::Medium {
-            estimate["default"] = json!(true);
-        }
-        estimates.push(estimate);
-    }
-    let suggestions = suggestions(&source, &args, &estimates, body_pt, per_page);
-    let warnings = source.open_warnings();
-
-    if args.json {
-        let mut report = json!({
-            "source": info,
-            "preset": preset_name(args.preset),
-            "estimates": estimates,
-            "suggestions": suggestions,
-            "warnings": warnings,
+        let visual_scale = match &visual_shapes {
+            Some(shapes) => Some(round3(sheet_scale(&layout, shapes.len(), shapes)?)),
+            None => None,
+        };
+        estimates.push(Estimate {
+            detail: name.to_string(),
+            per_sheet,
+            sheets: count.map(|count| count.div_ceil(per_sheet)),
+            scale: round3(scale),
+            text_12pt_px: (kind == InputKind::Pdf).then(|| round1(12.0 * scale)),
+            body_text_px: body_pt.map(|body| round1(body * scale)),
+            visual_scale,
+            default: detail == Detail::Medium,
         });
-        if let Some(body) = body_pt {
-            report["body_text_pt"] = json!(body);
-        }
-        if let Some(pages) = per_page {
-            report["pages"] = json!(
-                pages
-                    .iter()
-                    .map(|(page, summary)| {
-                        let mut value = json!({ "page": page });
-                        value
-                            .as_object_mut()
-                            .unwrap()
-                            .extend(json!(summary).as_object().unwrap().clone());
-                        value
-                    })
-                    .collect::<Vec<_>>()
-            );
-        }
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        for warning in &warnings {
-            eprintln!("warning: {warning}");
-        }
-        print_text(&source, &info, args.preset, &estimates, body_pt, per_page);
-        println!(
-            "suggested commands ({} input; heuristic starting points, adjust after looking at the sheets):",
-            kind_name(source.kind())
-        );
-        for s in &suggestions {
-            println!("  {s}");
-        }
     }
-    Ok(())
+    Ok(ProbeReport {
+        schema_version: SCHEMA_VERSION,
+        source: crate::render::source_info(&source, true),
+        preset: preset_name(args.preset).to_string(),
+        suggestions: suggestions(&source, &args, &estimates, body_pt, per_page),
+        estimates,
+        body_text_pt: body_pt,
+        pages: per_page.map(|pages| {
+            pages
+                .iter()
+                .map(|(page, summary)| PageReport {
+                    page: *page,
+                    summary: summary.clone(),
+                })
+                .collect()
+        }),
+        warnings: source.open_warnings(),
+    })
 }
 
 /// Smallest scale among `shapes` when `count` items are planned with `layout`, as `render`
@@ -155,10 +191,13 @@ fn visual_pages(pages: &[(usize, PageSummary)]) -> Vec<&(usize, PageSummary)> {
 fn page_summaries(source: &Source, per_page: bool) -> Result<Option<Vec<(usize, PageSummary)>>> {
     let Source::Pdf(pdf) = source else {
         if per_page {
-            return Err(usage(format!(
-                "--per-page works with PDF input only, not {}",
-                kind_name(source.kind())
-            ))
+            return Err(usage(
+                Reason::FlagNotForInput,
+                format!(
+                    "--per-page works with PDF input only, not {}",
+                    kind_name(source.kind())
+                ),
+            )
             .with_hint("see: gridity guide pdf")
             .into());
         }
@@ -246,7 +285,7 @@ fn median_aspect(shapes: &[Shape]) -> f64 {
 fn suggestions(
     source: &Source,
     args: &ProbeArgs,
-    estimates: &[Value],
+    estimates: &[Estimate],
     body_pt: Option<f64>,
     pages: Option<&[(usize, PageSummary)]>,
 ) -> Vec<String> {
@@ -256,8 +295,8 @@ fn suggestions(
         .map(|p| quote(&p.display().to_string()))
         .collect::<Vec<_>>()
         .join(" ");
-    let per_sheet = |i: usize| estimates[i]["per_sheet"].as_u64().unwrap_or(1) as usize;
-    let sheets = |i: usize| estimates[i]["sheets"].as_u64().unwrap_or(1) as usize;
+    let per_sheet = |i: usize| estimates[i].per_sheet;
+    let sheets = |i: usize| estimates[i].sheets.unwrap_or(1);
     let mut list = Vec::new();
     match source {
         Source::Pdf(pdf) => {
@@ -348,7 +387,7 @@ fn suggestions(
 
 /// Index into DETAILS of the lowest detail whose body text stays readable on the sheets that
 /// will be rendered (only the visual pages with `--per-page`); medium when unknown.
-fn readable_detail(estimates: &[Value], body_pt: Option<f64>) -> usize {
+fn readable_detail(estimates: &[Estimate], body_pt: Option<f64>) -> usize {
     let Some(body) = body_pt else {
         return 1;
     };
@@ -357,12 +396,9 @@ fn readable_detail(estimates: &[Value], body_pt: Option<f64>) -> usize {
         .unwrap_or(DETAILS.len() - 1)
 }
 
-fn visual_scale(estimates: &[Value], detail: usize) -> f64 {
+fn visual_scale(estimates: &[Estimate], detail: usize) -> f64 {
     let estimate = &estimates[detail];
-    estimate["visual_scale"]
-        .as_f64()
-        .or(estimate["scale"].as_f64())
-        .unwrap_or(1.0)
+    estimate.visual_scale.unwrap_or(estimate.scale)
 }
 
 /// `--max-sheets` for renders that need more sheets than the default limit of 10.
@@ -401,103 +437,91 @@ pub fn quote(s: &str) -> String {
     }
 }
 
-fn print_text(
-    source: &Source,
-    info: &Value,
-    preset: Preset,
-    estimates: &[Value],
-    body_pt: Option<f64>,
-    pages: Option<&[(usize, PageSummary)]>,
-) {
-    let unit = match source.kind() {
-        InputKind::Pdf => "pages",
-        InputKind::Images => "images",
-        InputKind::Video | InputKind::Anim => "frames",
+fn print_text(report: &ProbeReport) {
+    let source = &report.source;
+    let (kind, unit) = match source {
+        SourceInfo::Pdf { .. } => ("pdf", "pages"),
+        SourceInfo::Images { .. } => ("images", "images"),
+        SourceInfo::Video { .. } => ("video", "frames"),
+        SourceInfo::Anim { .. } => ("anim", "frames"),
     };
     match source {
-        Source::Pdf(pdf) => {
-            println!(
-                "{}: PDF, {} pages",
-                info["path"].as_str().unwrap_or_default(),
-                pdf.page_count()
-            );
-            if let Some(title) = &pdf.title {
+        SourceInfo::Pdf {
+            path,
+            pages,
+            title,
+            page_sizes,
+        } => {
+            println!("{path}: PDF, {pages} pages");
+            if let Some(title) = title {
                 println!("  title: {title}");
             }
-            for group in info["page_sizes"].as_array().into_iter().flatten() {
+            for group in page_sizes.iter().flatten() {
                 println!(
                     "  {}x{} pt {} x{} (p.{})",
-                    group["width_pt"],
-                    group["height_pt"],
-                    group["orientation"].as_str().unwrap_or_default(),
-                    group["count"],
-                    group["pages"].as_str().unwrap_or_default()
+                    group.width_pt, group.height_pt, group.orientation, group.count, group.pages
                 );
             }
         }
-        Source::Video(video) => {
-            println!("{}: video", info["path"].as_str().unwrap_or_default());
-            let duration = video
-                .duration
+        SourceInfo::Video {
+            path,
+            duration,
+            width,
+            height,
+            coded_width,
+            coded_height,
+            rotation,
+            fps,
+            codec,
+        } => {
+            println!("{path}: video");
+            let duration = duration
                 .map(|d| format!("{} ({d:.2}s)", format_time(d, d >= 3600.0, false)))
                 .unwrap_or_else(|| "unknown".to_string());
             println!("  duration: {duration}");
             println!(
-                "  display size: {}x{} (coded {}x{}, rotation {}°)",
-                video.display.0, video.display.1, video.coded.0, video.coded.1, video.rotation
+                "  display size: {width}x{height} (coded {coded_width}x{coded_height}, rotation {rotation}°)"
             );
-            if let Some(fps) = video.fps {
+            if let Some(fps) = fps {
                 println!("  fps: {fps:.3}");
             }
-            if let Some(codec) = &video.codec {
+            if let Some(codec) = codec {
                 println!("  codec: {codec}");
             }
         }
-        Source::Anim(anim) => {
-            println!("{}: animation", info["path"].as_str().unwrap_or_default());
-            println!(
-                "  {} frames, {:.2}s, {}x{}",
-                anim.starts.len(),
-                anim.duration,
-                anim.size.0,
-                anim.size.1
-            );
+        SourceInfo::Anim {
+            path,
+            frames,
+            duration,
+            width,
+            height,
+        } => {
+            println!("{path}: animation");
+            println!("  {frames} frames, {duration:.2}s, {width}x{height}");
         }
-        Source::Images(images) => {
-            println!("{}: {} images", images.name, images.files.len());
-            for file in images.files.iter().take(20) {
-                println!(
-                    "  {} ({}x{})",
-                    file.path.display(),
-                    file.size.0,
-                    file.size.1
-                );
+        SourceInfo::Images { name, count, files } => {
+            println!("{name}: {count} images");
+            let files = files.as_deref().unwrap_or_default();
+            for file in files.iter().take(20) {
+                println!("  {} ({}x{})", file.path, file.width, file.height);
             }
-            if images.files.len() > 20 {
-                println!("  ... and {} more", images.files.len() - 20);
+            if files.len() > 20 {
+                println!("  ... and {} more", files.len() - 20);
             }
         }
     }
-    println!("sheets (preset {}):", preset_name(preset));
-    for estimate in estimates {
-        let detail = estimate["detail"].as_str().unwrap_or_default();
-        let marker = if estimate["default"] == true {
-            " (default)"
-        } else {
-            ""
-        };
-        let sheets = estimate["sheets"]
-            .as_u64()
+    println!("sheets (preset {}):", report.preset);
+    for estimate in &report.estimates {
+        let marker = if estimate.default { " (default)" } else { "" };
+        let sheets = estimate
+            .sheets
             .map(|s| format!(" -> {s} sheet(s)"))
             .unwrap_or_default();
-        let scale = estimate["scale"].as_f64().unwrap_or_default();
-        let scale = match (
-            estimate["body_text_px"].as_f64(),
-            estimate["text_12pt_px"].as_f64(),
-        ) {
+        let scale = estimate.scale;
+        let scale = match (estimate.body_text_px, estimate.text_12pt_px) {
             (Some(px), _) => format!(
                 "{scale:.2} px/pt (body {}pt text = {px:.0}px{})",
-                body_pt.unwrap_or_default(),
+                report.body_text_pt.unwrap_or_default(),
                 if px < READABLE_PX {
                     ", hard to read"
                 } else {
@@ -508,15 +532,21 @@ fn print_text(
             (None, None) => format!("{:.0}% of native size", scale * 100.0),
         };
         println!(
-            "  --detail {detail:<6} {} {unit}/sheet{sheets}, {scale}{marker}",
-            estimate["per_sheet"]
+            "  --detail {:<6} {} {unit}/sheet{sheets}, {scale}{marker}",
+            estimate.detail, estimate.per_sheet
         );
     }
-    if let Some(pages) = pages {
+    if let Some(pages) = &report.pages {
         println!("pages:");
-        for (page, summary) in pages {
-            println!("  p.{page:<4} {}", summary.describe());
+        for page in pages {
+            println!("  p.{:<4} {}", page.page, page.summary.describe());
         }
+    }
+    println!(
+        "suggested commands ({kind} input; heuristic starting points, adjust after looking at the sheets):"
+    );
+    for s in &report.suggestions {
+        println!("  {s}");
     }
 }
 

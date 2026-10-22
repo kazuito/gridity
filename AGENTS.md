@@ -31,13 +31,15 @@ CI (`.github/workflows/ci.yml`) runs the same checks on Linux, macOS and Windows
 src/
   main.rs        entry point; maps errors to exit codes; JSON errors with --json
   cli.rs         clap derive definitions (all flags, defaults, help text)
-  error.rs       CliError { kind, message, hint } + ErrorKind -> exit code
+  error.rs       CliError { kind, reason, message, hint }; ErrorKind -> exit code;
+                 Reason -> stable `reason` string in JSON errors
   detect.rs      input type detection (magic bytes, extensions, APNG acTL check)
   select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
   compose.rs     draws a sheet: header, cells, borders, labels; place() positions images
   text.rs        font loading (embedded BIZ UDGothic) and text drawing
-  output.rs      output paths (tmp dir + hash), encoding, manifest structs (serde)
+  output.rs      output paths (tmp dir + hash), encoding, JSON structs (serde + schemars),
+                 SCHEMA_VERSION
   render.rs      `render` command: wires everything together; shared helpers for `probe`
   probe.rs       `probe` command: source info, per-detail estimates and scale, `--per-page`
                  PDF analysis, suggested commands
@@ -89,6 +91,14 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
   printed as `{"error": {...}}` on stdout.
+- **JSON is versioned and typed.** Every JSON document is a serde struct (no `json!`) with
+  `schema_version` first. Adding a field keeps `SCHEMA_VERSION`; removing, renaming or
+  retyping one raises it. `docs/schema/*.schema.json` are generated from the structs; after
+  changing them run `GRIDITY_UPDATE_SCHEMA=1 cargo test committed_schemas` and commit the
+  result. `reason` names (`error::Reason`) are never renamed, and each is listed in
+  `docs/guide/output.md` (a unit test checks this).
+- **Computing is separate from printing.** `render::execute`, `probe::report` and
+  `extract::report` return values and never write to stdout; their `run` functions print.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
   Label templates may only use the variables of the input kind (`label_vars`).
 - **Deterministic output location.** The default directory hashes the input paths and
@@ -115,7 +125,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   - keep hayro's borrowed types inside `source/pdf.rs` (`render_page`, `scan_page` and
     the lifetime-free `Collector`, which implements `Device<'a>` for every `'a`).
 - Errors: return `anyhow::Result`. For anything the user or an agent can fix, return a
-  `CliError` built with `error::usage` / `input` / `dependency` and add `.with_hint(...)`
+  `CliError` built with `error::usage` / `input` / `dependency` and a `Reason` (add a new
+  variant, plus a row in `docs/guide/output.md`, when none fits) and add `.with_hint(...)`
   with a concrete next step (a flag to pass, or `see: gridity guide <topic>`).
 - Keep `layout.rs` and `select.rs` pure (no I/O) and unit-tested.
 - `hayro` is pinned (`=0.8.0`). Upgrade deliberately and re-check the PDF fixtures.

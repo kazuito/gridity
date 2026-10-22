@@ -1,7 +1,8 @@
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::cli::Preset;
-use crate::error::{CliError, usage};
+use crate::error::{CliError, Reason, usage};
 
 /// Claude splits images into 28x28 px patches; one patch costs one visual token.
 const PATCH: u32 = 28;
@@ -53,7 +54,7 @@ pub struct Chrome {
     pub label: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Grid {
     pub cols: u32,
     pub rows: u32,
@@ -253,7 +254,7 @@ pub fn check_sheets(count: usize, cap: usize, max_sheets: usize) -> Result<usize
     let cap = cap.max(1);
     let sheets = count.div_ceil(cap).max(1);
     if sheets > max_sheets {
-        return Err(usage(format!(
+        return Err(usage(Reason::TooManySheets, format!(
             "{count} items need {sheets} sheets at {cap} per sheet, more than --max-sheets {max_sheets}"
         ))
         .with_hint(if sheets <= MAX_SHEETS {
@@ -294,9 +295,10 @@ pub fn plan(
             opts.max_cell,
         )
         .ok_or_else(|| {
-            usage(format!(
-                "{len} items do not fit on one sheet within the size limits"
-            ))
+            usage(
+                Reason::DoesNotFit,
+                format!("{len} items do not fit on one sheet within the size limits"),
+            )
             .with_hint(
                 "lower --per-sheet, --cols/--rows, --gap or --padding, or use --preset hires",
             )

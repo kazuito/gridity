@@ -10,7 +10,7 @@ use anyhow::Result;
 use image::{Rgba, RgbaImage};
 
 use crate::cli::{InputKind, SourceArgs};
-use crate::error::{CliError, input};
+use crate::error::{CliError, Reason, input};
 use crate::select::Crop;
 
 const MAX_DECODE_BYTES: u64 = 512 * 1024 * 1024;
@@ -154,15 +154,18 @@ pub fn decode_limits() -> image::Limits {
 
 pub fn decode_error(path: &Path, error: image::ImageError) -> CliError {
     match error {
-        image::ImageError::Limits(_) => input(format!(
-            "{} is too large to decode ({error})",
-            path.display()
-        ))
+        image::ImageError::Limits(_) => input(
+            Reason::TooLargeToDecode,
+            format!("{} is too large to decode ({error})", path.display()),
+        )
         .with_hint(format!(
             "resize or re-encode it: decoding may use at most {} MiB",
             MAX_DECODE_BYTES / 1024 / 1024
         )),
-        _ => input(format!("cannot decode {}: {error}", path.display())),
+        _ => input(
+            Reason::DecodeFailed,
+            format!("cannot decode {}: {error}", path.display()),
+        ),
     }
 }
 

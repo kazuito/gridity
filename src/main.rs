@@ -18,12 +18,11 @@ use std::any::Any;
 use std::panic::AssertUnwindSafe;
 use std::process::ExitCode;
 
-use anyhow::anyhow;
 use clap::Parser;
-use serde_json::json;
 
 use cli::{Cli, Command};
-use error::{CliError, ErrorKind};
+use error::{CliError, ErrorKind, Reason};
+use output::{ErrorInfo, ErrorReport, SCHEMA_VERSION};
 
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
@@ -48,7 +47,14 @@ fn main() -> ExitCode {
         Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
     }))
-    .unwrap_or_else(|panic| Err(anyhow!("internal error: {}", panic_message(&*panic))));
+    .unwrap_or_else(|panic| {
+        Err(CliError::new(
+            ErrorKind::Runtime,
+            Reason::Internal,
+            format!("internal error: {}", panic_message(&*panic)),
+        )
+        .into())
+    });
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => report(&err, json),
@@ -67,17 +73,9 @@ fn report_parse_error(err: clap::Error) -> ExitCode {
             .next()
             .unwrap_or_default()
             .trim_start_matches("error: ");
-        let body = json!({
-            "error": {
-                "kind": ErrorKind::Usage.name(),
-                "code": ErrorKind::Usage.exit_code(),
-                "message": message,
-                "hint": "run with --help for usage",
-            }
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
+        print_json_error(
+            &CliError::new(ErrorKind::Usage, Reason::InvalidArgument, message)
+                .with_hint("run with --help for usage"),
         );
     }
     let _ = err.print();
@@ -108,23 +106,45 @@ fn configure_threads(jobs: Option<usize>) {
 
 /// Prints the error to stderr (and as JSON on stdout with --json) and maps it to an exit code.
 fn report(err: &anyhow::Error, json: bool) -> ExitCode {
-    let cli_error = err.downcast_ref::<CliError>();
-    let kind = cli_error.map(|e| e.kind).unwrap_or(ErrorKind::Runtime);
-    let message = format!("{err:#}");
-    let hint = cli_error.and_then(|e| e.hint.clone());
-
-    eprintln!("error: {message}");
-    if let Some(hint) = &hint {
+    let error = describe(err);
+    eprintln!("error: {}", error.message);
+    if let Some(hint) = &error.hint {
         eprintln!("hint: {hint}");
     }
     if json {
-        let body = json!({
-            "error": { "kind": kind.name(), "code": kind.exit_code(), "message": message, "hint": hint }
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
-        );
+        print_json_error(&error);
     }
-    ExitCode::from(kind.exit_code() as u8)
+    ExitCode::from(error.kind.exit_code() as u8)
+}
+
+/// The error as a `CliError`, with the whole context chain as message; other errors are
+/// runtime errors with reason `other`.
+pub fn describe(err: &anyhow::Error) -> CliError {
+    let cli_error = err.downcast_ref::<CliError>();
+    CliError {
+        kind: cli_error.map_or(ErrorKind::Runtime, |e| e.kind),
+        reason: cli_error.map_or(Reason::Other, |e| e.reason),
+        message: format!("{err:#}"),
+        hint: cli_error.and_then(|e| e.hint.clone()),
+    }
+}
+
+pub fn error_report(error: &CliError) -> ErrorReport {
+    ErrorReport {
+        schema_version: SCHEMA_VERSION,
+        error: ErrorInfo {
+            kind: error.kind.name().to_string(),
+            code: error.kind.exit_code(),
+            reason: error.reason.name().to_string(),
+            message: error.message.clone(),
+            hint: error.hint.clone(),
+        },
+    }
+}
+
+fn print_json_error(error: &CliError) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&error_report(error)).unwrap_or_default()
+    );
 }

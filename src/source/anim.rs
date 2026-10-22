@@ -9,7 +9,7 @@ use image::imageops::{self, FilterType};
 use image::{AnimationDecoder, Frames, ImageDecoder, RgbaImage};
 
 use super::{Item, ItemKey, LabelVars, Rendered, decode_error, decode_limits, fit_size};
-use crate::error::input;
+use crate::error::{Reason, input};
 
 /// Browsers show GIF and APNG frames with a delay of 10 ms or less for 100 ms; do the same so
 /// timestamps match.
@@ -60,7 +60,11 @@ impl AnimSource {
             elapsed += frame_delay_ms(num, den) / 1000.0;
         }
         if starts.is_empty() {
-            return Err(input(format!("{} contains no frames", path.display())).into());
+            return Err(input(
+                Reason::NoFrames,
+                format!("{} contains no frames", path.display()),
+            )
+            .into());
         }
         Ok(AnimSource {
             path: path.to_path_buf(),
@@ -172,7 +176,11 @@ fn sniff_format(path: &Path) -> Result<AnimFormat> {
     match &magic {
         b"GIF8" => Ok(AnimFormat::Gif),
         [0x89, b'P', b'N', b'G'] => Ok(AnimFormat::Apng),
-        _ => Err(input(format!("{} is not a GIF or APNG file", path.display())).into()),
+        _ => Err(input(
+            Reason::WrongType,
+            format!("{} is not a GIF or APNG file", path.display()),
+        )
+        .into()),
     }
 }
 

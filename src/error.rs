@@ -28,18 +28,127 @@ impl ErrorKind {
     }
 }
 
-/// An error with a stable exit code and an optional hint telling the caller what to try next.
+/// Why an error happened, printed as `reason` in JSON so callers can branch on it. The names
+/// are part of the output contract (`docs/guide/output.md`): add new ones, never rename.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    InvalidArgument,
+    InvalidValue,
+    PageOutOfRange,
+    FlagNotForInput,
+    LabelVariableNotForInput,
+    TooManySheets,
+    TooManySamples,
+    DoesNotFit,
+    OutsideMedia,
+    UnknownTopic,
+    NotFound,
+    UnknownType,
+    WrongType,
+    Unreadable,
+    DecodeFailed,
+    TooLargeToDecode,
+    PasswordRequired,
+    PasswordIncorrect,
+    DecryptFailed,
+    InvalidPdf,
+    NoPages,
+    NoImages,
+    NoFrames,
+    NoVideoStream,
+    UnknownDuration,
+    Timeout,
+    ToolMissing,
+    UnsafeOutputDir,
+    Internal,
+    Other,
+}
+
+impl Reason {
+    pub const ALL: [Reason; 30] = [
+        Reason::InvalidArgument,
+        Reason::InvalidValue,
+        Reason::PageOutOfRange,
+        Reason::FlagNotForInput,
+        Reason::LabelVariableNotForInput,
+        Reason::TooManySheets,
+        Reason::TooManySamples,
+        Reason::DoesNotFit,
+        Reason::OutsideMedia,
+        Reason::UnknownTopic,
+        Reason::NotFound,
+        Reason::UnknownType,
+        Reason::WrongType,
+        Reason::Unreadable,
+        Reason::DecodeFailed,
+        Reason::TooLargeToDecode,
+        Reason::PasswordRequired,
+        Reason::PasswordIncorrect,
+        Reason::DecryptFailed,
+        Reason::InvalidPdf,
+        Reason::NoPages,
+        Reason::NoImages,
+        Reason::NoFrames,
+        Reason::NoVideoStream,
+        Reason::UnknownDuration,
+        Reason::Timeout,
+        Reason::ToolMissing,
+        Reason::UnsafeOutputDir,
+        Reason::Internal,
+        Reason::Other,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Reason::InvalidArgument => "invalid_argument",
+            Reason::InvalidValue => "invalid_value",
+            Reason::PageOutOfRange => "page_out_of_range",
+            Reason::FlagNotForInput => "flag_not_for_input",
+            Reason::LabelVariableNotForInput => "label_variable_not_for_input",
+            Reason::TooManySheets => "too_many_sheets",
+            Reason::TooManySamples => "too_many_samples",
+            Reason::DoesNotFit => "does_not_fit",
+            Reason::OutsideMedia => "outside_media",
+            Reason::UnknownTopic => "unknown_topic",
+            Reason::NotFound => "not_found",
+            Reason::UnknownType => "unknown_type",
+            Reason::WrongType => "wrong_type",
+            Reason::Unreadable => "unreadable",
+            Reason::DecodeFailed => "decode_failed",
+            Reason::TooLargeToDecode => "too_large_to_decode",
+            Reason::PasswordRequired => "password_required",
+            Reason::PasswordIncorrect => "password_incorrect",
+            Reason::DecryptFailed => "decrypt_failed",
+            Reason::InvalidPdf => "invalid_pdf",
+            Reason::NoPages => "no_pages",
+            Reason::NoImages => "no_images",
+            Reason::NoFrames => "no_frames",
+            Reason::NoVideoStream => "no_video_stream",
+            Reason::UnknownDuration => "unknown_duration",
+            Reason::Timeout => "timeout",
+            Reason::ToolMissing => "tool_missing",
+            Reason::UnsafeOutputDir => "unsafe_output_dir",
+            Reason::Internal => "internal",
+            Reason::Other => "other",
+        }
+    }
+}
+
+/// An error with a stable exit code, a reason and an optional hint telling the caller what to
+/// try next.
 #[derive(Debug)]
 pub struct CliError {
     pub kind: ErrorKind,
+    pub reason: Reason,
     pub message: String,
     pub hint: Option<String>,
 }
 
 impl CliError {
-    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+    pub fn new(kind: ErrorKind, reason: Reason, message: impl Into<String>) -> Self {
         CliError {
             kind,
+            reason,
             message: message.into(),
             hint: None,
         }
@@ -59,14 +168,34 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
-pub fn usage(message: impl Into<String>) -> CliError {
-    CliError::new(ErrorKind::Usage, message)
+pub fn usage(reason: Reason, message: impl Into<String>) -> CliError {
+    CliError::new(ErrorKind::Usage, reason, message)
 }
 
-pub fn input(message: impl Into<String>) -> CliError {
-    CliError::new(ErrorKind::Input, message)
+pub fn input(reason: Reason, message: impl Into<String>) -> CliError {
+    CliError::new(ErrorKind::Input, reason, message)
 }
 
-pub fn dependency(message: impl Into<String>) -> CliError {
-    CliError::new(ErrorKind::Dependency, message)
+pub fn dependency(reason: Reason, message: impl Into<String>) -> CliError {
+    CliError::new(ErrorKind::Dependency, reason, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_reason_is_documented_once() {
+        let guide = include_str!("../docs/guide/output.md");
+        let mut names: Vec<&str> = Reason::ALL.iter().map(|r| r.name()).collect();
+        for name in &names {
+            assert!(
+                guide.contains(&format!("`{name}`")),
+                "reason {name} is missing from docs/guide/output.md"
+            );
+        }
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), Reason::ALL.len());
+    }
 }

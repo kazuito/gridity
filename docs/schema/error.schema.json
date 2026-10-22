@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ErrorReport",
+  "description": "`{\"error\": ...}` printed on stdout with `--json` when a command fails.",
+  "type": "object",
+  "properties": {
+    "error": {
+      "$ref": "#/$defs/ErrorInfo"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "error"
+  ],
+  "$defs": {
+    "ErrorInfo": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Exit code.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "runtime, usage, input or dependency.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Machine-readable cause, e.g. page_out_of_range.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "code",
+        "reason",
+        "message"
+      ]
+    }
+  }
+}

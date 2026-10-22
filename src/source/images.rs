@@ -8,7 +8,7 @@ use image::{DynamicImage, ImageDecoder, ImageReader};
 use rayon::prelude::*;
 
 use super::{Item, ItemKey, LabelVars, Rendered, decode_error, decode_limits, file_name, fit_size};
-use crate::error::input;
+use crate::error::{Reason, input};
 
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 
@@ -36,12 +36,15 @@ impl ImagesSource {
             }
         }
         if paths.is_empty() {
-            return Err(input("no image files found in the given directory")
-                .with_hint(format!(
-                    "supported extensions: {}",
-                    IMAGE_EXTENSIONS.join(", ")
-                ))
-                .into());
+            return Err(input(
+                Reason::NoImages,
+                "no image files found in the given directory",
+            )
+            .with_hint(format!(
+                "supported extensions: {}",
+                IMAGE_EXTENSIONS.join(", ")
+            ))
+            .into());
         }
 
         let opened: Vec<Result<ImageFile>> = paths
@@ -145,8 +148,12 @@ pub fn has_image_extension(path: &Path) -> bool {
 }
 
 fn open_decoder(path: &Path) -> Result<impl ImageDecoder> {
-    let unreadable =
-        |e: &dyn std::fmt::Display| input(format!("cannot read image {}: {e}", path.display()));
+    let unreadable = |e: &dyn std::fmt::Display| {
+        input(
+            Reason::Unreadable,
+            format!("cannot read image {}: {e}", path.display()),
+        )
+    };
     let mut reader = ImageReader::open(path)
         .map_err(|e| unreadable(&e))?
         .with_guessed_format()

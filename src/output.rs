@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, RgbaImage};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::cli::Format;
-use crate::error::{CliError, ErrorKind};
+use crate::error::{CliError, ErrorKind, Reason};
 use crate::layout::Grid;
 
 // Image limits from https://platform.claude.com/docs/en/build-with-claude/vision (checked 2026-10-22).
@@ -138,6 +139,7 @@ fn create_private_dir(dir: &Path) -> Result<()> {
     if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o077 != 0 {
         return Err(CliError::new(
             ErrorKind::Runtime,
+            Reason::UnsafeOutputDir,
             format!(
                 "{} is not a private directory owned by the current user",
                 dir.display()
@@ -235,22 +237,102 @@ pub fn fnv1a(text: &str) -> u64 {
     })
 }
 
-#[derive(Debug, Serialize)]
+/// Version of every JSON document gridity prints. Adding fields keeps it; removing, renaming
+/// or retyping a field raises it.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// `render --json`.
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Manifest {
-    pub source: serde_json::Value,
+    pub schema_version: u32,
+    pub source: SourceInfo,
     pub limits: LimitsInfo,
     pub sheets: Vec<SheetInfo>,
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// The input, by kind. `page_sizes` and `files` are only reported by `probe`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SourceInfo {
+    Pdf {
+        path: String,
+        pages: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        page_sizes: Option<Vec<PageSizeGroup>>,
+    },
+    Video {
+        path: String,
+        duration: Option<f64>,
+        width: u32,
+        height: u32,
+        coded_width: u32,
+        coded_height: u32,
+        rotation: i32,
+        fps: Option<f64>,
+        codec: Option<String>,
+    },
+    Anim {
+        path: String,
+        frames: usize,
+        duration: f64,
+        width: u32,
+        height: u32,
+    },
+    Images {
+        name: String,
+        count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files: Option<Vec<FileInfo>>,
+    },
+}
+
+/// Consecutive or scattered pages sharing one size, e.g. 595x842 pt on pages "1-12".
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PageSizeGroup {
+    pub width_pt: u32,
+    pub height_pt: u32,
+    pub orientation: String,
+    pub count: usize,
+    pub pages: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FileInfo {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// `{"error": ...}` printed on stdout with `--json` when a command fails.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ErrorReport {
+    pub schema_version: u32,
+    pub error: ErrorInfo,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ErrorInfo {
+    /// runtime, usage, input or dependency.
+    pub kind: String,
+    /// Exit code.
+    pub code: i32,
+    /// Machine-readable cause, e.g. page_out_of_range.
+    pub reason: String,
+    pub message: String,
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct LimitsInfo {
     pub preset: String,
     pub max_edge: u32,
     pub max_tokens: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SheetInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -264,7 +346,7 @@ pub struct SheetInfo {
     pub cells: Vec<CellInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct CellInfo {
     pub index: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -365,6 +447,38 @@ mod tests {
         create_private_dir(&fresh).unwrap();
         let mode = std::fs::metadata(&fresh).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    /// JSON Schemas of every document gridity prints, by name; committed as
+    /// `docs/schema/<name>.schema.json`.
+    fn schemas() -> Vec<(&'static str, schemars::Schema)> {
+        vec![
+            ("render", schemars::schema_for!(Manifest)),
+            ("probe", schemars::schema_for!(crate::probe::ProbeReport)),
+            ("text", schemars::schema_for!(crate::extract::TextReport)),
+            ("error", schemars::schema_for!(ErrorReport)),
+        ]
+    }
+
+    /// Regenerate with `GRIDITY_UPDATE_SCHEMA=1 cargo test committed_schemas`.
+    #[test]
+    fn committed_schemas_match_the_code() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/schema");
+        let update = std::env::var_os("GRIDITY_UPDATE_SCHEMA").is_some();
+        for (name, schema) in schemas() {
+            let path = dir.join(format!("{name}.schema.json"));
+            let generated = serde_json::to_string_pretty(&schema).unwrap() + "\n";
+            if update {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &generated).unwrap();
+            }
+            let committed = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                committed == generated,
+                "{} is out of date; run GRIDITY_UPDATE_SCHEMA=1 cargo test committed_schemas",
+                path.display()
+            );
+        }
     }
 
     #[test]

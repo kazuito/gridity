@@ -12,8 +12,11 @@ pub fn load_font(path: Option<&Path>) -> Result<FontArc> {
             let data = std::fs::read(path)
                 .with_context(|| format!("failed to read font {}", path.display()))?;
             FontArc::try_from_vec(data).map_err(|_| {
-                crate::error::usage(format!("{} is not a usable TTF/OTF font", path.display()))
-                    .into()
+                crate::error::usage(
+                    crate::error::Reason::InvalidValue,
+                    format!("{} is not a usable TTF/OTF font", path.display()),
+                )
+                .into()
             })
         }
         None => Ok(FontArc::try_from_slice(EMBEDDED_FONT).expect("embedded font is valid")),

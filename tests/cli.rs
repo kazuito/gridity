@@ -610,7 +610,9 @@ fn page_out_of_range_reports_json_error() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["schema_version"], 1);
     assert_eq!(error["error"]["kind"], "usage");
+    assert_eq!(error["error"]["reason"], "page_out_of_range");
     assert!(
         error["error"]["message"]
             .as_str()
@@ -1079,6 +1081,7 @@ fn huge_samplings_fail_before_allocating() {
     let started = std::time::Instant::now();
     for args in [["--every", "0.000001"], ["--count", "200000000"]] {
         let output = run_error_json(&["render", s(&video), "--dry-run", args[0], args[1]]);
+        assert_eq!(output["reason"], "too_many_sheets");
         assert!(output["message"].as_str().unwrap().contains("--max-sheets"));
         assert!(
             !output["hint"].as_str().unwrap().contains("--max-sheets"),
@@ -1130,6 +1133,7 @@ fn argument_errors_are_json_with_json_flag() {
     assert_eq!(output.status.code(), Some(2));
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["error"]["kind"], "usage");
+    assert_eq!(error["error"]["reason"], "invalid_argument");
     assert!(
         error["error"]["message"]
             .as_str()
@@ -1382,4 +1386,43 @@ fn damaged_animations_keep_their_readable_frames() {
             .contains("could be decoded")
     );
     run_json(&["render", s(&gif), "-o", s(&dir.path().join("out"))]);
+}
+
+#[test]
+fn errors_carry_a_reason() {
+    let dir = TempDir::new().unwrap();
+    let error = |args: &[&str], code: i32| {
+        let output = gridity().args(args).arg("--json").output().unwrap();
+        assert_eq!(output.status.code(), Some(code), "{args:?}");
+        let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+        body["error"]["reason"].as_str().unwrap().to_string()
+    };
+    let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/encrypted.pdf");
+    assert_eq!(
+        error(&["render", s(&pdf), "--dry-run"], 3),
+        "password_required"
+    );
+    assert_eq!(
+        error(&["probe", s(&pdf), "--password", "wrong"], 3),
+        "password_incorrect"
+    );
+    let missing = dir.path().join("missing.pdf");
+    assert_eq!(error(&["text", s(&missing)], 3), "not_found");
+
+    let video = dir.path().join("clip.mp4");
+    std::fs::write(&video, b"\0\0\0\x18ftypmp42").unwrap();
+    let output = gridity()
+        .args([
+            "probe",
+            s(&video),
+            "--json",
+            "--ffmpeg",
+            "/nonexistent/ffmpeg",
+        ])
+        .env("GRIDITY_FFPROBE", "/nonexistent/ffprobe")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["reason"], "tool_missing");
 }

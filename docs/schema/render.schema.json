@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Manifest",
+  "description": "`render --json`.",
+  "type": "object",
+  "properties": {
+    "limits": {
+      "$ref": "#/$defs/LimitsInfo"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "sheets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SheetInfo"
+      }
+    },
+    "source": {
+      "$ref": "#/$defs/SourceInfo"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "source",
+    "limits",
+    "sheets",
+    "warnings"
+  ],
+  "$defs": {
+    "CellInfo": {
+      "type": "object",
+      "properties": {
+        "crop": {
+          "description": "Shown region as [x, y, width, height] fractions of the page or frame.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "error": {
+          "description": "Why the item could not be decoded; the cell then holds a gray placeholder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frame": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "rect": {
+          "description": "Placed image on the sheet: [x, y, width, height].",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "scale": {
+          "description": "Sheet pixels per PDF point, or displayed / native pixels for raster sources.",
+          "type": "number",
+          "format": "double"
+        },
+        "time": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "index",
+        "rect",
+        "scale"
+      ]
+    },
+    "FileInfo": {
+      "type": "object",
+      "properties": {
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "width",
+        "height"
+      ]
+    },
+    "Grid": {
+      "type": "object",
+      "properties": {
+        "cell_height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "cell_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "cols": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rows": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cols",
+        "rows",
+        "cell_width",
+        "cell_height"
+      ]
+    },
+    "LimitsInfo": {
+      "type": "object",
+      "properties": {
+        "max_edge": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_tokens": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "preset": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "preset",
+        "max_edge",
+        "max_tokens"
+      ]
+    },
+    "PageSizeGroup": {
+      "description": "Consecutive or scattered pages sharing one size, e.g. 595x842 pt on pages \"1-12\".",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "height_pt": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "orientation": {
+          "type": "string"
+        },
+        "pages": {
+          "type": "string"
+        },
+        "width_pt": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "width_pt",
+        "height_pt",
+        "orientation",
+        "count",
+        "pages"
+      ]
+    },
+    "SheetInfo": {
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CellInfo"
+          }
+        },
+        "est_tokens": {
+          "description": "Visual tokens under Claude's 28x28 px patch rule; other models count differently.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "grid": {
+          "$ref": "#/$defs/Grid"
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "est_tokens",
+        "grid",
+        "cells"
+      ]
+    },
+    "SourceInfo": {
+      "description": "The input, by kind. `page_sizes` and `files` are only reported by `probe`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pdf"
+            },
+            "page_sizes": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/PageSizeGroup"
+              }
+            },
+            "pages": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "pages"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "codec": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "coded_height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "coded_width": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "duration": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "fps": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "video"
+            },
+            "path": {
+              "type": "string"
+            },
+            "rotation": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "width": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "width",
+            "height",
+            "coded_width",
+            "coded_height",
+            "rotation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "duration": {
+              "type": "number",
+              "format": "double"
+            },
+            "frames": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "anim"
+            },
+            "path": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "frames",
+            "duration",
+            "width",
+            "height"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "files": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/FileInfo"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "images"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "count"
+          ]
+        }
+      ]
+    }
+  }
+}

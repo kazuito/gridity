@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::cli::InputKind;
-use crate::error::{input, usage};
+use crate::error::{Reason, input, usage};
 use crate::source::images::has_image_extension;
 
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -17,21 +17,29 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 pub fn detect(inputs: &[PathBuf], forced: Option<InputKind>) -> Result<InputKind> {
     for path in inputs {
         if !path.exists() {
-            return Err(input(format!("{} does not exist", path.display())).into());
+            return Err(input(
+                Reason::NotFound,
+                format!("{} does not exist", path.display()),
+            )
+            .into());
         }
     }
     let several = inputs.len() > 1 || inputs[0].is_dir();
 
     if let Some(kind) = forced {
         if several && kind != InputKind::Images {
-            return Err(usage("several inputs or a directory can only be used with images").into());
+            return Err(usage(
+                Reason::InvalidArgument,
+                "several inputs or a directory can only be used with images",
+            )
+            .into());
         }
         return Ok(kind);
     }
     if several {
         for path in inputs.iter().filter(|p| p.is_file()) {
             if !has_image_extension(path) {
-                return Err(usage(format!(
+                return Err(usage(Reason::InvalidArgument, format!(
                     "{} is not an image; several inputs or a directory are only supported for images",
                     path.display()
                 ))
@@ -55,11 +63,12 @@ pub fn detect(inputs: &[PathBuf], forced: Option<InputKind>) -> Result<InputKind
     if has_image_extension(path) {
         return Ok(InputKind::Images);
     }
-    Err(
-        input(format!("cannot detect the type of {}", path.display()))
-            .with_hint("pass --type pdf|video|anim|images")
-            .into(),
+    Err(input(
+        Reason::UnknownType,
+        format!("cannot detect the type of {}", path.display()),
     )
+    .with_hint("pass --type pdf|video|anim|images")
+    .into())
 }
 
 const PNG_SIGNATURE: &[u8] = &[0x89, b'P', b'N', b'G'];

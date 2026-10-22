@@ -1,6 +1,7 @@
 //! Pure analysis of what a PDF page shows: visible text, its size, and how much of the page
 //! images and drawings cover. Coordinates are points on the displayed page, y pointing down.
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// One visible glyph: where its baseline starts and ends, and its font size in points.
@@ -30,7 +31,7 @@ pub struct PageScan {
     pub stroke_boxes: Vec<BBox>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Content {
     /// Readable as extracted text.
@@ -42,7 +43,7 @@ pub enum Content {
     Empty,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct PageSummary {
     pub content: Content,
     /// Visible characters, whitespace excluded.

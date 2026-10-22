@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 
 use super::{Item, ItemKey, LabelVars, Rendered, fit_size};
-use crate::error::{dependency, input};
+use crate::error::{Reason, dependency, input};
 use crate::select::Crop;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -50,11 +50,14 @@ impl VideoSource {
             PROBE_TIMEOUT,
         )?;
         if !output.status.success() {
-            return Err(input(format!(
-                "ffprobe could not read {}: {}",
-                path.display(),
-                last_line(&output.stderr)
-            ))
+            return Err(input(
+                Reason::DecodeFailed,
+                format!(
+                    "ffprobe could not read {}: {}",
+                    path.display(),
+                    last_line(&output.stderr)
+                ),
+            )
             .into());
         }
         let info: Value =
@@ -67,17 +70,22 @@ impl VideoSource {
                         && s["disposition"]["attached_pic"].as_i64().unwrap_or(0) == 0
                 })
             })
-            .ok_or_else(|| input(format!("{} has no video stream", path.display())))?;
+            .ok_or_else(|| {
+                input(
+                    Reason::NoVideoStream,
+                    format!("{} has no video stream", path.display()),
+                )
+            })?;
 
         let coded = (
             stream["width"].as_u64().unwrap_or(0) as u32,
             stream["height"].as_u64().unwrap_or(0) as u32,
         );
         if coded.0 == 0 || coded.1 == 0 {
-            return Err(input(format!(
-                "{} has a video stream without a size",
-                path.display()
-            ))
+            return Err(input(
+                Reason::NoVideoStream,
+                format!("{} has a video stream without a size", path.display()),
+            )
             .into());
         }
         let sar = stream["sample_aspect_ratio"]
@@ -249,7 +257,7 @@ fn run_tool(command: &mut Command, program: &Path, timeout: Duration) -> Result<
         .spawn()
         .map_err(|e| -> anyhow::Error {
             if e.kind() == IoErrorKind::NotFound {
-                dependency(format!("{} was not found", program.display()))
+                dependency(Reason::ToolMissing, format!("{} was not found", program.display()))
                     .with_hint("install ffmpeg (e.g. `brew install ffmpeg`) or pass --ffmpeg / set GRIDITY_FFMPEG")
                     .into()
             } else {
@@ -267,7 +275,7 @@ fn run_tool(command: &mut Command, program: &Path, timeout: Duration) -> Result<
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(input(format!(
+            return Err(input(Reason::Timeout, format!(
                 "{} did not finish within {}s",
                 program.display(),
                 timeout.as_secs_f64()

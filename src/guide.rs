@@ -1,4 +1,4 @@
-use crate::error::usage;
+use crate::error::{Reason, usage};
 
 const TOPICS: &[(&str, &str)] = &[
     ("index", include_str!("../docs/guide/index.md")),
@@ -20,8 +20,11 @@ pub fn run(topic: Option<&str>) -> anyhow::Result<()> {
         name => {
             let (_, text) = TOPICS.iter().find(|(n, _)| *n == name).ok_or_else(|| {
                 let names: Vec<&str> = TOPICS.iter().map(|(n, _)| *n).collect();
-                usage(format!("unknown guide topic '{name}'"))
-                    .with_hint(format!("topics: {}, all", names.join(", ")))
+                usage(
+                    Reason::UnknownTopic,
+                    format!("unknown guide topic '{name}'"),
+                )
+                .with_hint(format!("topics: {}, all", names.join(", ")))
             })?;
             println!("{}", text.trim_end());
         }

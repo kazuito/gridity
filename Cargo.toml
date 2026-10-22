@@ -20,6 +20,7 @@ hayro = "=0.8.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "rayon"] }
 imageproc = { version = "0.27", default-features = false, features = ["text"] }
 rayon = "1.12.0"
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 

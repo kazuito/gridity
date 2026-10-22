@@ -1,4 +1,4 @@
-use crate::error::{CliError, usage};
+use crate::error::{CliError, Reason, usage};
 
 /// Parses a 1-based page list such as "1-3,5,10-" or "-4" against `total` pages.
 /// Order is preserved and duplicates are dropped.
@@ -30,14 +30,16 @@ pub fn parse_pages(spec: &str, total: usize) -> Result<Vec<usize>, CliError> {
             }
         };
         if first > last {
-            return Err(usage(format!(
-                "invalid page range '{part}': start is after end"
-            )));
+            return Err(usage(
+                Reason::InvalidValue,
+                format!("invalid page range '{part}': start is after end"),
+            ));
         }
         if last > total {
-            return Err(usage(format!(
-                "page {last} is out of range: the document has {total} pages"
-            ))
+            return Err(usage(
+                Reason::PageOutOfRange,
+                format!("page {last} is out of range: the document has {total} pages"),
+            )
             .with_hint(format!("use --pages within 1-{total}")));
         }
         for (page, seen) in seen.iter_mut().enumerate().take(last + 1).skip(first) {
@@ -48,18 +50,22 @@ pub fn parse_pages(spec: &str, total: usize) -> Result<Vec<usize>, CliError> {
         }
     }
     if pages.is_empty() {
-        return Err(usage(format!("--pages '{spec}' selects no pages")));
+        return Err(usage(
+            Reason::InvalidValue,
+            format!("--pages '{spec}' selects no pages"),
+        ));
     }
     Ok(pages)
 }
 
 fn parse_page_number(s: &str, spec: &str) -> Result<usize, CliError> {
     match s.trim().parse::<usize>() {
-        Ok(0) => Err(usage("page numbers start at 1")),
+        Ok(0) => Err(usage(Reason::InvalidValue, "page numbers start at 1")),
         Ok(n) => Ok(n),
-        Err(_) => Err(usage(format!(
-            "invalid page list '{spec}' (expected e.g. \"1-3,5,10-\")"
-        ))),
+        Err(_) => Err(usage(
+            Reason::InvalidValue,
+            format!("invalid page list '{spec}' (expected e.g. \"1-3,5,10-\")"),
+        )),
     }
 }
 
@@ -89,7 +95,7 @@ impl Crop {
 /// Parses `X,Y,W,H` fractions, e.g. "0,0.5,1,0.5" for the bottom half.
 pub fn parse_crop(spec: &str) -> Result<Crop, CliError> {
     let bad = |why: &str| {
-        usage(format!("invalid --crop '{spec}': {why}")).with_hint(
+        usage(Reason::InvalidValue, format!("invalid --crop '{spec}': {why}")).with_hint(
             "--crop takes X,Y,W,H as fractions of the page or frame, e.g. 0,0.5,1,0.5 for the bottom half",
         )
     };
@@ -134,9 +140,12 @@ pub fn spread_pages(total: usize, n: usize) -> Vec<usize> {
 pub fn parse_time(s: &str) -> Result<f64, CliError> {
     let text = s.trim();
     let invalid = || {
-        usage(format!(
-            "invalid time '{s}' (expected e.g. \"90\", \"1:30\", \"00:01:30.5\", \"1m30s\")"
-        ))
+        usage(
+            Reason::InvalidValue,
+            format!(
+                "invalid time '{s}' (expected e.g. \"90\", \"1:30\", \"00:01:30.5\", \"1m30s\")"
+            ),
+        )
     };
     if text.is_empty() {
         return Err(invalid());
@@ -224,13 +233,16 @@ impl Sampling {
         if let Some(every) = every {
             let step = parse_time(every)?;
             if step <= 0.0 {
-                return Err(usage("--every must be greater than 0"));
+                return Err(usage(
+                    Reason::InvalidValue,
+                    "--every must be greater than 0",
+                ));
             }
             return Ok(Some(Sampling::Every(step)));
         }
         if let Some(count) = count {
             if count == 0 {
-                return Err(usage("--count must be at least 1"));
+                return Err(usage(Reason::InvalidValue, "--count must be at least 1"));
             }
             return Ok(Some(Sampling::Count(count)));
         }
@@ -241,7 +253,7 @@ impl Sampling {
                 .map(parse_time)
                 .collect::<Result<Vec<_>, _>>()?;
             if times.is_empty() {
-                return Err(usage("--at needs at least one time"));
+                return Err(usage(Reason::InvalidValue, "--at needs at least one time"));
             }
             return Ok(Some(Sampling::At(times)));
         }
