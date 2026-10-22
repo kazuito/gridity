@@ -383,9 +383,14 @@ fn nice_step(seconds: f64) -> u64 {
         .unwrap_or(900)
 }
 
+/// Quotes an argument for the shell suggested commands are pasted into: POSIX shells, or
+/// cmd.exe and PowerShell on Windows (where `"` cannot occur in file names).
 pub fn quote(s: &str) -> String {
-    if s.chars().all(|c| c.is_alphanumeric() || "-_./".contains(c)) {
+    let safe = if cfg!(windows) { "-_./\\:" } else { "-_./" };
+    if s.chars().all(|c| c.is_alphanumeric() || safe.contains(c)) {
         s.to_string()
+    } else if cfg!(windows) {
+        format!("\"{s}\"")
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
     }
@@ -507,5 +512,29 @@ fn print_text(
         for (page, summary) in pages {
             println!("  p.{page:<4} {}", summary.describe());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_arguments_stay_unquoted() {
+        assert_eq!(quote("docs/report-v2.pdf"), "docs/report-v2.pdf");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_quoting() {
+        assert_eq!(quote("my file.pdf"), "'my file.pdf'");
+        assert_eq!(quote("it's.pdf"), "'it'\\''s.pdf'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_quoting() {
+        assert_eq!(quote(r"C:\docs\report.pdf"), r"C:\docs\report.pdf");
+        assert_eq!(quote(r"C:\my docs\it's.pdf"), r#""C:\my docs\it's.pdf""#);
     }
 }

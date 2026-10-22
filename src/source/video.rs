@@ -229,7 +229,10 @@ fn resolve_tools(custom: Option<&Path>) -> (PathBuf, PathBuf) {
     let sibling = ffmpeg
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
-        .map(|dir| dir.join("ffprobe"))
+        .map(|dir| {
+            dir.join("ffprobe")
+                .with_extension(std::env::consts::EXE_EXTENSION)
+        })
         .filter(|p| p.exists());
     let ffprobe = std::env::var_os("GRIDITY_FFPROBE")
         .map(PathBuf::from)
