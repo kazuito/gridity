@@ -2,7 +2,15 @@
 name = "gridity"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
 description = "Arrange PDF pages, video frames and images into labeled grid sheets for LLM vision"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kazuito/gridity"
+homepage = "https://github.com/kazuito/gridity"
+readme = "README.md"
+keywords = ["pdf", "video", "grid", "llm", "contact-sheet"]
+categories = ["command-line-utilities", "multimedia::images", "multimedia::video"]
+exclude = ["samples/", ".claude/"]
 
 [dependencies]
 ab_glyph = "0.2"

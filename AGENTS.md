@@ -4,7 +4,7 @@ Guidance for AI agents developing **gridity**, a Rust CLI that arranges PDF page
 frames, GIF/APNG frames and images into labeled grid sheets sized for LLM vision.
 
 This file is about developing gridity. To learn how to *use* it, run `gridity guide`
-(sources in `docs/guide/`). Design rationale and decisions are in `docs/PLAN.md`.
+(sources in `docs/guide/`).
 
 ## Commands
 
@@ -122,8 +122,7 @@ variables), then renders a batch of items into `RgbaImage`s that fit given boxes
 2. Apply it in `render.rs` (and in `check_flags` if it only applies to some input kinds).
 3. If it changes the layout, make sure `--dry-run` and `probe` estimates reflect it.
    `probe` builds its layout from real default `RenderArgs` via `default_render_args`.
-4. Update `docs/guide/*.md` (the shipped documentation) and, for design-level changes,
-   `docs/PLAN.md`.
+4. Update `docs/guide/*.md` (the shipped documentation).
 5. Add a unit test for the logic and an integration test for the CLI behavior.
 
 **Adding an input kind**
@@ -135,7 +134,7 @@ position, format, `min_cell`, label variables, and a guide topic.
 **Tuning page analysis**
 Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
 changes with `gridity text` / `gridity probe --per-page` on `samples/inputs/*.pdf` and a
-real slide deck or paper, and keep `docs/guide/text.md` and `docs/PLAN.md` in sync.
+real slide deck or paper, and keep `docs/guide/text.md` in sync.
 
 **Tuning `--detail`**
 `render::min_cell` holds the minimum cell long edge per kind and detail. It is calibrated
@@ -174,3 +173,4 @@ non-square-pixel video, a small GIF, an APNG and directories of images
 
 - Do not commit or push unless the user asks.
 - Commit `Cargo.lock` (binary crate) and keep `assets/fonts/OFL.txt` with the font.
+- The project is dual-licensed `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`).

@@ -31,10 +31,20 @@ Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
 ## Documentation
 
 `gridity guide [topic]` prints the bundled guide (`docs/guide/*.md`):
-`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`. The design notes are in
-[`docs/PLAN.md`](docs/PLAN.md).
+`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`.
 
-## License notes
+## License
+
+gridity is licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
+- MIT license ([`LICENSE-MIT`](LICENSE-MIT))
+
+at your option.
 
 Labels use the embedded BIZ UDGothic font, licensed under the SIL Open Font License 1.1
-(`assets/fonts/OFL.txt`).
+([`assets/fonts/OFL.txt`](assets/fonts/OFL.txt)).
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in gridity by you, as defined in the Apache-2.0 license, shall be dual licensed
+as above, without any additional terms or conditions.
