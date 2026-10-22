@@ -36,7 +36,8 @@ Parameters are the CLI options with underscores: `per_sheet` for `--per-sheet`, 
 `--type`, booleans for switches (`no_header: true`). Inputs are `inputs` (a list) for
 `render` and `probe`, and `input` for `text`. `render` returns `images: false` results
 without image blocks when only the manifest is needed. Error messages and hints name the
-CLI flags; translate them the same way.
+tool parameters (`max_sheets 6`, not `--max-sheets 6`); a flag marked `(CLI only)` has no
+tool parameter.
 
 The JSON document (manifest or report) is both the first text block of the result and its
 `structuredContent`. Failures are results with `isError: true` and a text block holding

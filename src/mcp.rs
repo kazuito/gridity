@@ -479,8 +479,11 @@ impl Argv {
             .map_err(|e| {
                 let rendered = e.to_string();
                 let message = rendered.lines().next().unwrap_or_default();
-                usage(Reason::InvalidArgument, message.trim_start_matches("error: "))
-                    .with_hint("parameters are the CLI flags with underscores: per_sheet for --per-sheet; see guide topic \"mcp\"")
+                usage(
+                    Reason::InvalidArgument,
+                    message.trim_start_matches("error: "),
+                )
+                .with_hint("call tools/list for the parameter schema; see guide topic \"mcp\"")
             })
     }
 }
@@ -584,11 +587,95 @@ fn success(document: &impl serde::Serialize, summary: &str, images: Vec<Value>) 
 
 /// A failed tool call. No `structuredContent`, which would have to match the output schema.
 fn tool_error(error: &CliError) -> Value {
-    let mut text = format!("error: {}\nreason: {}", error.message, error.reason.name());
+    let parameters = parameter_names();
+    let mut text = format!(
+        "error: {}\nreason: {}",
+        with_parameter_names(&error.message, &parameters),
+        error.reason.name()
+    );
     if let Some(hint) = &error.hint {
+        let hint = with_parameter_names(hint, &parameters);
         text.push_str(&format!("\nhint: {hint}"));
     }
     json!({ "content": [{ "type": "text", "text": text }], "isError": true })
+}
+
+fn parameter_names() -> Vec<String> {
+    [
+        schema_for!(RenderParams),
+        schema_for!(ProbeParams),
+        schema_for!(TextParams),
+        schema_for!(GuideParams),
+    ]
+    .iter()
+    .filter_map(|schema| schema.get("properties")?.as_object())
+    .flat_map(|properties| properties.keys().cloned())
+    .collect()
+}
+
+/// Errors name CLI flags; a tool caller gets `max_sheets 6` for `--max-sheets 6`, `'cols'` for
+/// clap's `'--cols <N>'`, and `--gap (CLI only)` for flags without a parameter. Only whole
+/// tokens are flags, so paths such as `/tmp/--pages/a.pdf` stay as they are.
+fn with_parameter_names(text: &str, parameters: &[String]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut last_flag_end = None;
+    while let Some(found) = text[copied..].find("--") {
+        let start = copied + found;
+        let name_end = text[start + 2..]
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+            .map_or(text.len(), |n| start + 2 + n);
+        let name = &text[start + 2..name_end];
+        out.push_str(&text[copied..start]);
+        copied = name_end;
+        let starts_flag = match text[..start].chars().next_back() {
+            None => true,
+            Some('/') => last_flag_end == Some(start - 1),
+            Some(c) => c.is_whitespace() || "'\"`([".contains(c),
+        };
+        let ends_flag = {
+            let rest = &text[name_end..];
+            match rest.chars().next() {
+                None => true,
+                Some('.') => rest[1..].chars().next().is_none_or(char::is_whitespace),
+                Some('/') => rest[1..].starts_with("--"),
+                Some(c) => !(c.is_alphanumeric() || c == '_' || c == '\\'),
+            }
+        };
+        if !(starts_flag && ends_flag && name.starts_with(|c: char| c.is_ascii_lowercase())) {
+            out.push_str(&text[start..name_end]);
+            continue;
+        }
+        last_flag_end = Some(name_end);
+        let parameter = name.replace('-', "_");
+        if parameters.contains(&parameter) {
+            out.push_str(&parameter);
+            copied += value_placeholder_len(&text[name_end..]);
+        } else {
+            out.push_str(&text[start..name_end]);
+            out.push_str(" (CLI only)");
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+/// Length of a ` <N>` or ` <X,Y,W,H>` value name after a flag.
+fn value_placeholder_len(rest: &str) -> usize {
+    let Some(inner) = rest.strip_prefix(" <") else {
+        return 0;
+    };
+    match inner.find('>') {
+        Some(n)
+            if n > 0
+                && inner[..n]
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == ',') =>
+        {
+            n + 3
+        }
+        _ => 0,
+    }
 }
 
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
@@ -948,5 +1035,65 @@ mod tests {
         });
         let error = crate::describe(&unknown.unwrap_err());
         assert_eq!(error.reason, Reason::UnknownTopic);
+    }
+
+    #[test]
+    fn errors_name_tool_parameters() {
+        let parameters = parameter_names();
+        let rewrite = |text: &str| with_parameter_names(text, &parameters);
+
+        let sheets = crate::layout::check_sheets(20, 4, 4).unwrap_err();
+        assert_eq!(
+            rewrite(&sheets.message),
+            "20 items need 5 sheets at 4 per sheet, more than max_sheets 4"
+        );
+        assert_eq!(
+            rewrite(&sheets.hint.unwrap()),
+            "narrow the selection (pages, start/end, count, every), use detail low, or pass max_sheets 5"
+        );
+        assert_eq!(
+            rewrite("lower --per-sheet, --cols/--rows, --gap or --padding, or use --preset hires"),
+            "lower per_sheet, cols/rows, --gap (CLI only) or --padding (CLI only), or use preset hires"
+        );
+        assert_eq!(
+            rewrite("pass --password-file <FILE> or set X; avoid --password, which others see"),
+            "pass password_file or set X; avoid --password (CLI only), which others see"
+        );
+        assert_eq!(rewrite("--type."), "type.");
+        for unchanged in [
+            "cannot read /tmp/--pages/a.pdf",
+            "cannot read a--count.pdf",
+            "cannot read --pages.pdf",
+            "cannot read C:\\--every\\b.png",
+            "x --/--pages -- --9",
+        ] {
+            assert_eq!(rewrite(unchanged), unchanged);
+        }
+    }
+
+    #[test]
+    fn clap_errors_name_tool_parameters() {
+        let text = |argv: Argv| {
+            let error = argv.parse(vec!["x.pdf".to_string()]).unwrap_err();
+            tool_error(&error)["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let mut cols = Argv::new("render");
+        cols.value("cols", Some(101));
+        let cols = text(cols);
+        assert!(
+            cols.contains("for 'cols'") && !cols.contains("--"),
+            "{cols}"
+        );
+        let mut conflict = Argv::new("render");
+        conflict.value("title", Some("T"));
+        conflict.switch("no-header", Some(true));
+        let conflict = text(conflict);
+        assert!(
+            conflict.contains("'title'") && conflict.contains("'no_header'"),
+            "{conflict}"
+        );
     }
 }
