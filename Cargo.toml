@@ -12,6 +12,14 @@ keywords = ["pdf", "video", "grid", "llm", "contact-sheet"]
 categories = ["command-line-utilities", "multimedia::images", "multimedia::video"]
 include = ["/src/", "/assets/fonts/", "/docs/", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }-v{ version }{ archive-suffix }"
+bin-dir = "{ name }-{ target }-v{ version }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [dependencies]
 ab_glyph = "0.2"
 anyhow = "1.0.104"

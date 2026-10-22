@@ -1,16 +1,19 @@
 # Releasing
 
-Releases go to crates.io (`cargo install gridity`) and npm (`npx gridity`). The npm package
-holds prebuilt binaries for macOS (arm64, x64), Linux (arm64, x64; static musl) and
-Windows (x64), and a small Node launcher that runs the one for the current platform.
+Releases go to crates.io (`cargo install gridity`), npm (`npx gridity`) and GitHub Releases
+(`cargo binstall gridity`). The npm package holds prebuilt binaries for macOS (arm64, x64),
+Linux (arm64, x64; static musl) and Windows (x64), and a small Node launcher that runs the
+one for the current platform. The GitHub release holds the same binaries as
+`gridity-<target>-v<version>.tgz` (`.zip` for Windows) plus `SHA256SUMS`; cargo-binstall
+finds them through `[package.metadata.binstall]` in `Cargo.toml`.
 
 ## Every release
 
 1. Update `version` in `Cargo.toml`, run `cargo build` so `Cargo.lock` follows, and commit.
 2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`.
 3. `.github/workflows/release.yml` checks that the tag matches `Cargo.toml`, builds the five
-   binaries with `--profile dist`, and publishes with `cargo publish` and
-   `npm publish --provenance`.
+   binaries with `--profile dist`, publishes with `cargo publish` and
+   `npm publish --provenance`, and creates the GitHub release with the archives.
 
 ## One-time setup
 

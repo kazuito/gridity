@@ -61,8 +61,8 @@ tests/cli.rs     integration tests; fixtures are generated in temp dirs
 tests/fixtures/  committed fixtures that cannot be generated in Rust (encrypted.pdf)
 docs/schema/     JSON Schemas generated from the output structs (see "JSON is versioned")
 packaging/npm/   npm package: Node launcher + build.mjs that bundles the prebuilt binaries
-.github/         CI (ci.yml) and tag-triggered releases to crates.io and npm (release.yml;
-                 steps in RELEASING.md)
+.github/         CI (ci.yml) and tag-triggered releases to crates.io, npm and GitHub
+                 Releases for cargo-binstall (release.yml; steps in RELEASING.md)
 samples/         committed inputs for visual review; render.sh writes samples/out/ (gitignored)
 assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 ```
