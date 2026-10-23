@@ -35,6 +35,31 @@ fn s(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+/// Splits a suggested command line as the shell would, undoing `probe::quote`: '...' with
+/// '\'' for a quote on Unix, "..." on Windows, where a backslash is a path separator.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' => words.extend(word.take()),
+            '\'' if !cfg!(windows) => {
+                let quoted = word.get_or_insert_with(String::new);
+                quoted.extend(chars.by_ref().take_while(|&c| c != '\''));
+            }
+            '"' if cfg!(windows) => {
+                let quoted = word.get_or_insert_with(String::new);
+                quoted.extend(chars.by_ref().take_while(|&c| c != '"'));
+            }
+            '\\' if !cfg!(windows) => word.get_or_insert_with(String::new).extend(chars.next()),
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    words.extend(word);
+    words
+}
+
 /// Same rule as Claude's resizing check for the compat preset.
 fn fits_compat(width: u32, height: u32) -> bool {
     width.div_ceil(28) * 28 <= 1568
@@ -388,7 +413,7 @@ fn text_marks_scripts() {
 #[test]
 fn suggested_close_ups_render_for_papers_with_footnotes() {
     let dir = TempDir::new().unwrap();
-    let pdf = dir.path().join("paper.pdf");
+    let pdf = dir.path().join("my paper.pdf");
     let page = format!(
         "{}BT /F1 4 Tf 50 30 Td (footnote set in very small type, forty chars) Tj ET\n\
          0 0 1 rg 50 50 400 300 re f\n",
@@ -406,8 +431,12 @@ fn suggested_close_ups_render_for_papers_with_footnotes() {
         .collect();
     assert!(renders.len() >= 2, "{renders:?}");
     for render in renders {
-        let args: Vec<&str> = render.split_whitespace().skip(1).collect();
-        gridity().args(&args).arg("--dry-run").assert().success();
+        let args = shell_words(render);
+        gridity()
+            .args(&args[1..])
+            .arg("--dry-run")
+            .assert()
+            .success();
     }
 }
 
@@ -453,7 +482,7 @@ fn probe_per_page_suggests_text_and_visual_pages() {
 #[test]
 fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
     let dir = TempDir::new().unwrap();
-    let pdf = dir.path().join("doc.pdf");
+    let pdf = dir.path().join("it's a doc.pdf");
     let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page_sized(10, 14));
     let mut pages = vec![(595, 842, 0, text_page_sized(10, 14))];
     pages.extend(std::iter::repeat_n((595, 842, 0, figure), 9));
@@ -472,7 +501,8 @@ fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
         .map(|s| s.as_str().unwrap())
         .find(|s| s.starts_with("gridity render") && s.contains("--pages 2-10"))
         .expect("a render suggestion for the visual pages");
-    let args: Vec<&str> = render.split_whitespace().skip(1).collect();
+    let words = shell_words(render);
+    let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
     let manifest = run_json(&[&args[..], &["--dry-run"]].concat());
     for cell in manifest["sheets"][0]["cells"].as_array().unwrap() {
         let body_px = 14.0 * cell["scale"].as_f64().unwrap();
