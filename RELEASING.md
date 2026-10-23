@@ -28,10 +28,16 @@ a package that already exists, so the first version is published by hand:
 3. crates.io: `cargo login`, then `cargo publish` from the tagged commit. In the crate's
    settings on crates.io, add a trusted publisher: repository `kazuito/gridity`, workflow
    `release.yml`, environment `release`.
-4. npm: download all `bin-*` artifacts of that run into one directory (`gh run download
-   <run-id> -p 'bin-*' -D bins`), then `npm ci` in `packaging/npm/`,
-   `node packaging/npm/build.ts --all bins npm-package` and `npm publish --access public`
-   from `npm-package/`. Always use `--all` for anything
+4. npm: download all `bin-*` artifacts of that run into one directory. `gh run download`
+   puts each artifact in its own subdirectory, so move their contents up:
+
+   ```sh
+   gh run download <run-id> -p 'bin-*' -D bins
+   for d in bins/bin-*/; do mv "$d"* bins/ && rmdir "$d"; done
+   ```
+
+   Then `npm ci` in `packaging/npm/`, `node packaging/npm/build.ts --all bins npm-package`
+   and `npm publish --access public` from `npm-package/`. Always use `--all` for anything
    you publish: a version published without every platform cannot be replaced. In the
    package's settings on npmjs.com, add a trusted publisher for GitHub Actions with the
    same repository, workflow and environment.
