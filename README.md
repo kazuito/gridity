@@ -6,7 +6,6 @@ sized so an LLM can understand many pages or moments from a single image.
 ```sh
 gridity probe report.pdf                          # pages, sizes, sheet estimates, text size
 gridity probe report.pdf --per-page               # which pages need to be seen
-gridity text report.pdf                           # visible text of each page
 gridity render report.pdf                         # prints absolute paths of the sheets
 gridity render report.pdf --pages 3-8 --json      # manifest with cell coordinates
 gridity render report.pdf --pages 7 --crop 0,0.5,1,0.5   # close-up of the bottom half
@@ -35,7 +34,7 @@ Video input needs `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`), or
 
 ## MCP server
 
-`gridity mcp` exposes `render`, `probe`, `text` and `guide` as Model Context Protocol
+`gridity mcp` exposes `render`, `probe` and `guide` as Model Context Protocol
 tools; `render` returns the sheets as images.
 
 ```sh
@@ -48,7 +47,7 @@ See `gridity guide mcp` for other clients, parameters and limits.
 ## Documentation
 
 `gridity guide [topic]` prints the bundled guide (`docs/guide/*.md`):
-`recipes`, `pdf`, `text`, `video`, `images`, `layout`, `output`, `mcp`. JSON Schemas of
+`recipes`, `pdf`, `pages`, `video`, `images`, `layout`, `output`, `mcp`. JSON Schemas of
 every JSON output are in [`docs/schema/`](docs/schema/).
 
 ## License

@@ -4,7 +4,6 @@ mod compose;
 mod detect;
 mod error;
 mod export;
-mod extract;
 mod guide;
 mod layout;
 mod mcp;
@@ -36,7 +35,6 @@ fn main() -> ExitCode {
         Command::Render(args) => args.json,
         Command::Export(args) => args.json,
         Command::Probe(args) => args.json,
-        Command::Text(args) => args.json,
         Command::Guide(_) | Command::Mcp(_) | Command::Version => false,
     };
     configure_threads(match &cli.command {
@@ -51,7 +49,6 @@ fn main() -> ExitCode {
         Command::Render(args) => render::run(*args),
         Command::Export(args) => export::run(*args),
         Command::Probe(args) => probe::run(args),
-        Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
         Command::Mcp(args) => mcp::run(args),
         Command::Version => {

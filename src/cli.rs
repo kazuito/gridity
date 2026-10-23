@@ -23,14 +23,6 @@ Examples:
 Output: absolute paths of the written sheets, one per line (or a JSON manifest with --json).
 For agents: run `gridity guide` for usage, recipes and the output schema.";
 
-const TEXT_EXAMPLES: &str = "\
-Examples:
-  gridity text report.pdf                        # every page
-  gridity text report.pdf --pages 3-5 --json     # text plus content type per page
-
-Each page starts with a line like `--- p.3 · mixed · body 11pt ---`. Pages marked
-`mixed` or `graphics` have figures or text that cannot be extracted: render them.";
-
 const EXPORT_EXAMPLES: &str = "\
 Examples:
   gridity export slides.pdf --pages 6 --crop 0.53,0.76,0.42,0.1 -o figs/lts.png
@@ -77,12 +69,9 @@ pub enum Command {
         mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half [default: whole]")),
     )]
     Export(Box<ExportArgs>),
-    /// Print the visible text of PDF pages, with each page's content type
-    #[command(after_help = TEXT_EXAMPLES)]
-    Text(TextArgs),
     /// Print usage documentation for agents (Markdown)
     Guide(GuideArgs),
-    /// Serve render, probe, text and guide as MCP tools over stdin/stdout
+    /// Serve render, probe and guide as MCP tools over stdin/stdout
     Mcp(McpArgs),
     /// Print version
     #[command(visible_alias = "v")]
@@ -462,24 +451,6 @@ pub struct ProbeArgs {
     /// Analyze every PDF page: content type, text size, images and drawings
     #[arg(long)]
     pub per_page: bool,
-
-    /// Print JSON
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct TextArgs {
-    /// PDF file
-    #[arg(value_name = "INPUT")]
-    pub input: PathBuf,
-
-    /// Pages to print, 1-based: "1-3,5,10-", "-4" [default: all]
-    #[arg(long, value_name = "LIST")]
-    pub pages: Option<String>,
-
-    #[command(flatten)]
-    pub password: PasswordArgs,
 
     /// Print JSON
     #[arg(long)]

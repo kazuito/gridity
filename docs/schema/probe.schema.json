@@ -53,6 +53,13 @@
         "type": "string"
       }
     },
+    "text_pages": {
+      "description": "Pages of content type `text` as a page list, e.g. \"1-3,8\" (`--per-page`); absent when\nthere are none.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "warnings": {
       "type": "array",
       "items": {
@@ -104,19 +111,8 @@
             "null"
           ]
         },
-        "input": {
-          "description": "For `text`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "inputs": {
-          "description": "For `render` and `probe`.",
-          "type": [
-            "array",
-            "null"
-          ],
+          "type": "array",
           "items": {
             "type": "string"
           }
@@ -182,7 +178,10 @@
             }
           ]
         }
-      }
+      },
+      "required": [
+        "inputs"
+      ]
     },
     "Content": {
       "oneOf": [
@@ -651,7 +650,6 @@
       "type": "string",
       "enum": [
         "render",
-        "text",
         "probe"
       ]
     }

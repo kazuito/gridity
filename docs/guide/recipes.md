@@ -4,7 +4,7 @@
 
 ```sh
 gridity probe report.pdf --per-page    # content type and text size of every page
-gridity text report.pdf                # read the text pages as text
+# read the listed text pages with a PDF text extractor (e.g. docling or MarkItDown)
 gridity render report.pdf --pages 4-7,12 --detail low   # only pages that need to be seen
 gridity render report.pdf --pages 9 --crop 0,0.5,1,0.5  # close-up of a small part
 ```

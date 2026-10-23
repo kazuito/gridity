@@ -28,13 +28,11 @@ files, are never read);
 | Tool | Returns |
 |---|---|
 | `probe` | sheet estimates and suggested calls (`gridity guide output`) |
-| `text` | visible text of PDF pages and their content type (`gridity guide text`) |
 | `render` | the sheets as images, plus the manifest (cell rects, labels, pages or times) |
 | `guide` | this documentation; `topic` is a guide topic or `all` |
 
 Parameters are the CLI options with underscores: `per_sheet` for `--per-sheet`, `type` for
-`--type`, booleans for switches (`no_header: true`, `ruler: true`). `export` is CLI only. Inputs are `inputs` (a list) for
-`render` and `probe`, and `input` for `text`. `render` returns `images: false` results
+`--type`, booleans for switches (`no_header: true`, `ruler: true`). `export` is CLI only. Inputs are `inputs` (a list). `render` returns `images: false` results
 without image blocks when only the manifest is needed. Error messages and hints name the
 tool parameters (`max_sheets 6`, not `--max-sheets 6`); a flag marked `(CLI only)` has no
 tool parameter.
@@ -56,14 +54,9 @@ The JSON document (manifest or report) is both the first text block of the resul
   sheets that fit are attached and the summary line names the ones left out. Their paths are
   in the manifest (`sheets[i].path`); read those files, or render the rest in another call
   with `pages` or the time range narrowed.
-- `text` returns the leading selected pages whose JSON fits in `max_chars` characters
-  (default 40000, about 10K tokens of English; 1000-400000), and always at least one page.
-  The pages left out are in `next_pages` (e.g. `"15-50"`), and the summary line says which
-  pages came back: call `text` again with `pages` set to `next_pages` to read on, or raise
-  `max_chars`. The formula/figure hint covers all selected pages, including the ones not
-  returned yet.
-- `text` and `probe` declare `anthropic/maxResultSizeChars` (500000), so Claude Code keeps
-  their results inline instead of saving results over 50000 characters to a file.
+- `probe` declares `anthropic/maxResultSizeChars` (500000), so Claude Code keeps its
+  results inline (`per_page` on long PDFs) instead of saving results over 50000 characters
+  to a file.
 - Sheets are also written to the default private output directory, as with the CLI.
 - Passwords are not tool parameters, so they stay out of the conversation. Start the
   server with `GRIDITY_PDF_PASSWORD` set, or pass `password_file` (a path, not `-`).

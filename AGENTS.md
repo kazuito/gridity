@@ -51,12 +51,10 @@ src/
   ruler.rs       pure ruler math: steps in hundredths, ticks in page/frame fractions
   probe.rs       `probe` command: source info, per-detail estimates and scale, `--per-page`
                  PDF analysis, suggested commands
-  extract.rs     `text` command: visible PDF text per page with its content type
-  pagetext.rs    pure page analysis: text assembly, text sizes, coverage, content type
+  pagetext.rs    pure page analysis: text lines, text sizes, coverage, content type
   guide.rs       `guide` command: include_str! of docs/guide/*.md
   mcp.rs         `mcp` command: synchronous JSON-RPC over stdin/stdout; tool parameters
-                 become CLI arguments parsed by clap, then render::execute / probe::report /
-                 extract::report
+                 become CLI arguments parsed by clap, then render::execute / probe::report
   source/
     mod.rs       Item, ItemKey, LabelVars, enum Source, fit_size(), Warnings
     pdf.rs       hayro renderer (`render_page`) and page scanner (`scan_page`, `Collector`)
@@ -86,7 +84,7 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 `None`), then sizes each item (`export_size`), names it (`file_names`), and renders and
 writes the items in memory-bounded batches without `compose`.
 
-`probe` and `text` scan PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
+`probe` scans PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
 summarize them with `pagetext::summarize`.
 
 Each source turns a selection into `Item`s (aspect ratio, optional native size, key, label
@@ -110,8 +108,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 - **Probe numbers equal render numbers.** `probe` computes `scale` from `layout::plan`
   with real default `RenderArgs`, the same path `render` uses.
 - **Output contract.** For `render` and `export`, stdout carries only output paths (one
-  absolute path per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
-  `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
+  absolute path per line), the JSON manifest, or the dry-run summary; `probe` prints its report (or JSON
+  with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
   printed as `{"error": {...}}` on stdout. For `mcp`, stdout carries only JSON-RPC
   messages, one per line; nothing reached from a tool call may print to stdout.
@@ -122,7 +120,7 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   result. `reason` names (`error::Reason`) are never renamed, and each is listed in
   `docs/guide/output.md` (a unit test checks this).
 - **Computing is separate from printing.** `render::execute`, `export::execute`,
-  `probe::report` and `extract::report` return values and never write to stdout; their `run` functions print.
+  and `probe::report` return values and never write to stdout; their `run` functions print.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
   Label and `--name` templates may only use the variables of the input kind (`label_vars`,
   `export::name_vars`).
@@ -181,8 +179,9 @@ position, format, `min_cell`, label variables, and a guide topic.
 
 **Tuning page analysis**
 Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
-changes with `gridity text` / `gridity probe --per-page` on `samples/inputs/*.pdf` and a
-real slide deck or paper, and keep `docs/guide/text.md` in sync.
+changes with `gridity probe --per-page` on `samples/inputs/*.pdf` and a real slide deck or
+paper, and keep `docs/guide/pages.md` in sync. gridity does not extract text for reading;
+that is left to dedicated tools (docling, MarkItDown).
 
 **Adding a preset** (e.g. for another provider)
 1. Read the provider's image documentation first; never use remembered numbers. Put the URL

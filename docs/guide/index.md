@@ -9,7 +9,6 @@ limits. Read one sheet instead of taking many screenshots.
 | Command | Purpose |
 |---|---|
 | `gridity probe <INPUT>` | Page count / duration / resolution and how many sheets a render needs |
-| `gridity text <PDF>` | Visible text of each page and whether the page needs to be seen |
 | `gridity render <INPUT>... [OPTIONS]` | Write sheets; prints their absolute paths |
 | `gridity export <INPUT>... [OPTIONS]` | Write each page, frame or image (or a region) to its own file |
 | `gridity guide [TOPIC]` | This documentation |
@@ -20,7 +19,8 @@ limits. Read one sheet instead of taking many screenshots.
 
 1. `gridity probe report.pdf` — learn the size of the input, the sheet estimates and how
    large the text will be. For PDFs add `--per-page` to see which pages need images.
-2. PDFs: `gridity text report.pdf` — read text pages as text; it costs far fewer tokens.
+2. PDFs: read the pages listed under `text pages` with a PDF text extractor (e.g. docling
+   or MarkItDown); text costs far fewer tokens than images.
 3. `gridity render report.pdf --pages ...` — render the pages or frames that need to be
    seen, and read the printed paths with your image viewer tool.
 4. Zoom in where needed: `--pages 7 --detail high`, or `--crop X,Y,W,H` (fractions of
@@ -37,7 +37,7 @@ that change their meaning; read formulas from the page images.
 
 - stdout: `render` prints one absolute path per sheet and `export` one per file (or a JSON
   manifest with `--json`);
-  `probe` and `text` print their report (JSON with `--json`).
+  `probe` prints its report (JSON with `--json`).
 - stderr: warnings and errors (`error: ...` / `hint: ...`).
 - Sheets go to `$TMPDIR/gridity-<uid>/<name>-<hash>/` unless `-o` is given; re-running the
   same command overwrites the same files.
@@ -48,7 +48,7 @@ that change their meaning; read formulas from the page images.
 
 - `gridity guide recipes` — task-oriented examples
 - `gridity guide pdf` — page selection, passwords (`--password-file`, `GRIDITY_PDF_PASSWORD`)
-- `gridity guide text` — text extraction and page analysis for PDFs
+- `gridity guide pages` — which PDF pages to render and which to read as text
 - `gridity guide video` — time ranges, sampling, GIF/APNG
 - `gridity guide images` — files and directories
 - `gridity guide export` — one file per page, frame or region, without sheet layout
