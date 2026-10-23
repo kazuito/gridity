@@ -1867,6 +1867,11 @@ fn export_names_one_file_per_item() {
     let manifest = run_json(&["export", s(&pdf), "--pages", "1-2", "-o", s(&numbered)]);
     assert_eq!(names(&manifest), ["sheet-01.png", "sheet-02.png"]);
 
+    let braced = dir.path().join("a{page}.pdf");
+    std::fs::copy(&pdf, &braced).unwrap();
+    let manifest = run_json(&["export", s(&braced), "--pages", "1-2", "-o", s(&pages_dir)]);
+    assert_eq!(names(&manifest), ["a_page_-p01.png", "a_page_-p02.png"]);
+
     let error = run_error_json(&["export", s(&pdf), "--name", "{stem}", "-o", s(&pages_dir)]);
     assert_eq!(error["reason"], "invalid_value");
     assert!(error["hint"].as_str().unwrap().contains("{index}"));

@@ -19,7 +19,7 @@ use crate::render::{
 };
 use crate::select::{Crop, format_file_time, parse_crop};
 use crate::source::{Item, ItemKey, Source, Warnings, fit_size};
-use crate::template::validate_template;
+use crate::template::{expand_template, validate_template};
 
 pub const DEFAULT_DPI: u32 = 150;
 pub const DEFAULT_MAX_FILES: usize = 100;
@@ -314,32 +314,31 @@ fn file_names(template: &str, source: &Source, items: &[Item], stem: &str) -> Ve
                     .unwrap_or_default(),
                 _ => String::new(),
             };
-            let expanded = template
-                .replace("{stem}", stem)
-                .replace("{index}", &format!("{:0index_width$}", item.vars.index))
-                .replace("{total}", &items.len().to_string())
-                .replace(
-                    "{page}",
-                    &item_ref
+            let expanded = expand_template(template, |var| match var {
+                "stem" => Some(stem.to_string()),
+                "index" => Some(format!("{:0index_width$}", item.vars.index)),
+                "total" => Some(items.len().to_string()),
+                "page" => Some(
+                    item_ref
                         .page
                         .map(|p| format!("{p:0page_width$}"))
                         .unwrap_or_default(),
-                )
-                .replace(
-                    "{time}",
-                    &item_ref
+                ),
+                "time" => Some(
+                    item_ref
                         .time
                         .map(|t| format_file_time(t, long, fine))
                         .unwrap_or_default(),
-                )
-                .replace(
-                    "{frame}",
-                    &item_ref
+                ),
+                "frame" => Some(
+                    item_ref
                         .frame
                         .map(|f| format!("{f:0frame_width$}"))
                         .unwrap_or_default(),
-                )
-                .replace("{name}", &name);
+                ),
+                "name" => Some(name.clone()),
+                _ => None,
+            });
             sanitize_file_name(&expanded)
         })
         .collect()
