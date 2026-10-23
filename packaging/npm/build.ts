@@ -1,13 +1,14 @@
-// Assembles the npm package from prebuilt binaries.
-// Usage: node packaging/npm/build.mjs [--all] <binaries-dir> <out-dir>
+// Assembles the npm package: bundles the launcher with tsdown and adds the prebuilt binaries.
+// Usage: node packaging/npm/build.ts [--all] <binaries-dir> <out-dir>
 // <binaries-dir>/<rust target>/gridity[.exe] for each target in TARGETS. Missing ones are
 // skipped with a warning, so a local build can package just the host binary; --all (used
 // for releases) makes them an error.
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { build } from "tsdown";
 
-const TARGETS = {
+const TARGETS: Record<string, string> = {
   "aarch64-apple-darwin": "darwin-arm64",
   "x86_64-apple-darwin": "darwin-x64",
   "aarch64-unknown-linux-musl": "linux-arm64",
@@ -19,16 +20,29 @@ const args = process.argv.slice(2);
 const requireAll = args[0] === "--all";
 const [binaries, out] = args.slice(requireAll ? 1 : 0).map((p) => resolve(p));
 if (!binaries || !out) {
-  console.error("usage: node packaging/npm/build.mjs [--all] <binaries-dir> <out-dir>");
+  console.error("usage: node packaging/npm/build.ts [--all] <binaries-dir> <out-dir>");
   process.exit(2);
 }
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..", "..");
-const version = readFileSync(join(root, "Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)[1];
+const version = readFileSync(join(root, "Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)?.[1];
+if (!version) {
+  console.error("error: no version in Cargo.toml");
+  process.exit(1);
+}
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-cpSync(join(here, "bin"), join(out, "bin"), { recursive: true });
+await build({
+  config: false,
+  cwd: here,
+  entry: { gridity: join(here, "src", "gridity.ts") },
+  outDir: join(out, "bin"),
+  platform: "node",
+  format: "esm",
+  dts: false,
+  logLevel: "warn",
+});
 copyFileSync(join(root, "README.md"), join(out, "README.md"));
 copyFileSync(join(root, "LICENSE-MIT"), join(out, "LICENSE-MIT"));
 copyFileSync(join(root, "LICENSE-APACHE"), join(out, "LICENSE-APACHE"));
@@ -58,6 +72,9 @@ if (packaged === 0) {
 }
 
 const manifest = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
+delete manifest.private;
+delete manifest.scripts;
+delete manifest.devDependencies;
 manifest.version = version;
 writeFileSync(join(out, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
 console.log(`gridity ${version}: ${packaged} of ${Object.keys(TARGETS).length} platforms in ${out}`);

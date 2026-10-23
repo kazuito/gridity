@@ -103,7 +103,9 @@ jobs:
           pattern: bin-*
           path: bins
           merge-multiple: true
-      - run: node packaging/npm/build.mjs --all bins npm-package
+      - run: npm ci
+        working-directory: packaging/npm
+      - run: node packaging/npm/build.ts --all bins npm-package
       - run: npm publish --provenance --access public
         working-directory: npm-package
 

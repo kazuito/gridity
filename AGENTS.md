@@ -15,6 +15,8 @@ cargo clippy --all-targets         # must stay warning-free
 cargo fmt                          # run before finishing any change
 ```
 
+After changing `packaging/npm/`, run `npm ci && npm run typecheck` there (Node 24).
+
 The video tests need `ffmpeg`/`ffprobe` on `PATH`; they skip themselves when it is missing.
 Before finishing, run all four commands above. If you change rendering, also render a real
 input and look at the output image (see "Manual verification").
@@ -65,7 +67,8 @@ docs/guide/      user/agent documentation embedded into the binary
 tests/cli.rs     integration tests; fixtures are generated in temp dirs
 tests/fixtures/  committed fixtures that cannot be generated in Rust (encrypted.pdf)
 docs/schema/     JSON Schemas generated from the output structs (see "JSON is versioned")
-packaging/npm/   npm package: Node launcher + build.mjs that bundles the prebuilt binaries
+packaging/npm/   npm package: TypeScript launcher (src/gridity.ts) and build.ts, which bundles
+                 it with tsdown and adds the prebuilt binaries (Node 24 runs build.ts as is)
 .github/         CI (ci.yml) and tag-triggered releases to crates.io, npm and GitHub
                  Releases for cargo-binstall (release.yml; steps in RELEASING.md)
 samples/         committed inputs for visual review; render.sh writes samples/out/ (gitignored)

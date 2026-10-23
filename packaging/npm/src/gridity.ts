@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 // Runs the prebuilt gridity binary for this platform with the same arguments, stdio and
 // exit code, so `npx gridity mcp` works as an MCP server.
-"use strict";
-
-const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const platform = `${process.platform}-${process.arch}`;
 const name = process.platform === "win32" ? "gridity.exe" : "gridity";
-const binary = path.join(__dirname, "..", "vendor", platform, name);
+const binary = fileURLToPath(new URL(`../vendor/${platform}/${name}`, import.meta.url));
 
-if (!fs.existsSync(binary)) {
+if (!existsSync(binary)) {
   console.error(
     `error: gridity has no prebuilt binary for ${platform}\n` +
       "hint: install it with `cargo install gridity`",

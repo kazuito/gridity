@@ -2,10 +2,11 @@
 
 Releases go to crates.io (`cargo install gridity`), npm (`npx gridity`) and GitHub Releases
 (`cargo binstall gridity`). The npm package holds prebuilt binaries for macOS (arm64, x64),
-Linux (arm64, x64; static musl) and Windows (x64), and a small Node launcher that runs the
-one for the current platform. The GitHub release holds the same binaries as
-`gridity-<target>-v<version>.tgz` (`.zip` for Windows) plus `SHA256SUMS`; cargo-binstall
-finds them through `[package.metadata.binstall]` in `Cargo.toml`.
+Linux (arm64, x64; static musl) and Windows (x64), and a small Node launcher (TypeScript in
+`packaging/npm/src/`, bundled with tsdown) that runs the one for the current platform. The
+GitHub release holds the same binaries as `gridity-<target>-v<version>.tgz` (`.zip` for
+Windows) plus `SHA256SUMS`; cargo-binstall finds them through `[package.metadata.binstall]`
+in `Cargo.toml`.
 
 ## Every release
 
@@ -28,8 +29,9 @@ a package that already exists, so the first version is published by hand:
    settings on crates.io, add a trusted publisher: repository `kazuito/gridity`, workflow
    `release.yml`, environment `release`.
 4. npm: download all `bin-*` artifacts of that run into one directory (`gh run download
-   <run-id> -p 'bin-*' -D bins`), then `node packaging/npm/build.mjs --all bins npm-package`
-   and `npm publish --access public` from `npm-package/`. Always use `--all` for anything
+   <run-id> -p 'bin-*' -D bins`), then `npm ci` in `packaging/npm/`,
+   `node packaging/npm/build.ts --all bins npm-package` and `npm publish --access public`
+   from `npm-package/`. Always use `--all` for anything
    you publish: a version published without every platform cannot be replaced. In the
    package's settings on npmjs.com, add a trusted publisher for GitHub Actions with the
    same repository, workflow and environment.
@@ -44,7 +46,8 @@ For `npm pack` only; never publish a package built this way (it holds one platfo
 cargo publish --dry-run
 cargo build --release
 mkdir -p target/manual/bins/aarch64-apple-darwin && cp target/release/gridity target/manual/bins/aarch64-apple-darwin/
-node packaging/npm/build.mjs target/manual/bins target/manual/npm
+(cd packaging/npm && npm ci)
+node packaging/npm/build.ts target/manual/bins target/manual/npm
 (cd target/manual/npm && npm pack --pack-destination ..)
 npx --package ./target/manual/gridity-<version>.tgz gridity --version
 ```
