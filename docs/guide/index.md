@@ -14,6 +14,7 @@ limits. Read one sheet instead of taking many screenshots.
 | `gridity export <INPUT>... [OPTIONS]` | Write each page, frame or image (or a region) to its own file |
 | `gridity guide [TOPIC]` | This documentation |
 | `gridity mcp` | Serve these commands as MCP tools (`gridity guide mcp`) |
+| `gridity version` | Print the version (also `-v`, `--version`) |
 
 ## Typical workflow
 

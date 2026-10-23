@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         Command::Export(args) => args.json,
         Command::Probe(args) => args.json,
         Command::Text(args) => args.json,
-        Command::Guide(_) | Command::Mcp(_) => false,
+        Command::Guide(_) | Command::Mcp(_) | Command::Version => false,
     };
     configure_threads(match &cli.command {
         Command::Render(args) => args.jobs,
@@ -54,6 +54,10 @@ fn main() -> ExitCode {
         Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
         Command::Mcp(args) => mcp::run(args),
+        Command::Version => {
+            println!("gridity {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
     }))
     .unwrap_or_else(|panic| {
         Err(CliError::new(

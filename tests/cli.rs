@@ -1174,7 +1174,18 @@ fn argument_errors_are_json_with_json_flag() {
         .args(["render", "--help", "--json"])
         .assert()
         .success();
-    gridity().arg("--version").assert().success();
+}
+
+#[test]
+fn every_version_spelling_prints_the_version() {
+    let expected = format!("gridity {}\n", env!("CARGO_PKG_VERSION"));
+    for arg in ["--version", "-v", "version", "v"] {
+        gridity()
+            .arg(arg)
+            .assert()
+            .success()
+            .stdout(expected.clone());
+    }
 }
 
 #[test]

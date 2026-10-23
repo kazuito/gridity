@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::builder::RangedU64ValueParser;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use image::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,10 +50,15 @@ For agents: run `gridity guide` for usage, recipes and the output schema.";
 #[command(
     name = "gridity",
     version,
+    disable_version_flag = true,
     about = "Arrange PDF pages, video frames and images into labeled grid sheets for LLM vision",
     after_help = ROOT_HELP
 )]
 pub struct Cli {
+    /// Print version
+    #[arg(short = 'v', long, action = ArgAction::Version)]
+    version: (),
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -79,6 +84,9 @@ pub enum Command {
     Guide(GuideArgs),
     /// Serve render, probe, text and guide as MCP tools over stdin/stdout
     Mcp(McpArgs),
+    /// Print version
+    #[command(visible_alias = "v")]
+    Version,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
