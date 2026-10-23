@@ -4,8 +4,10 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::cli::{Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs};
-use crate::compose::{Cell, Header, Style, compose, header_height, place};
+use crate::cli::{
+    Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs, SourceArgs,
+};
+use crate::compose::{Cell, Header, Ruler, Style, compose, header_height, place};
 use crate::detect::detect;
 use crate::error::{CliError, Reason, input, usage};
 use crate::layout::{
@@ -13,9 +15,10 @@ use crate::layout::{
 };
 use crate::output::{
     CellInfo, FileInfo, LimitsInfo, MANY_IMAGES_MAX_EDGE, MAX_BASE64_BYTES, Manifest,
-    PageSizeGroup, SCHEMA_VERSION, SheetInfo, SourceInfo, Target, base64_len, encode,
-    format_from_extension, write_atomic,
+    PageSizeGroup, SCHEMA_VERSION, SheetInfo, SourceInfo, Target, base64_len, check_not_input,
+    encode, format_from_extension, write_atomic,
 };
+use crate::ruler::{Steps, choose_steps, steps_label};
 use crate::select::{
     Crop, Sampling, format_time, min_interval, parse_crop, parse_pages, parse_time, sample_count,
     sample_times,
@@ -139,14 +142,14 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     };
 
     let kind = detect(&args.inputs, args.kind)?;
-    check_flags(kind, &args)?;
+    check_flags(kind, &args.selection, &args.source, &[])?;
     let template = match (&args.style.label, args.style.no_label) {
         (_, true) => None,
         (Some(t), _) => Some(t.clone()),
         (None, _) => Some(default_label(kind).to_string()),
     };
     if let Some(t) = &template {
-        validate_template(t, kind)?;
+        validate_template(t, "label", label_vars(kind), kind)?;
     }
 
     let mut layout = build_layout(&args, kind)?;
@@ -161,7 +164,8 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
         None => size,
     });
 
-    let items = select_items(&source, &args.selection, crop, &layout)?;
+    let frames = frame_limits(&source, crop, &layout);
+    let items = select_items(&source, &args.selection, crop, &frames)?;
     let aspect = median_aspect(&items);
     let sheets = plan(
         items.len(),
@@ -183,7 +187,14 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     let target = Target::resolve(
         args.output.as_deref(),
         &output_stem(&source, &args.inputs),
-        &fingerprint(&args, kind),
+        &fingerprint(
+            kind,
+            &args.inputs,
+            format!(
+                "{:?}|{:?}|{:?}|{:?}|{}",
+                args.selection, args.layout, args.style, args.format, args.quality
+            ),
+        ),
     )?;
 
     let warnings = Warnings::default();
@@ -193,12 +204,23 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     let mut missing_chars = BTreeSet::new();
     let mut sheet_infos = Vec::with_capacity(sheets.len());
     let mut written = Vec::new();
+    let input_paths = input_files(&source, &args.inputs);
     if !args.dry_run {
         target.create_dir()?;
     }
 
+    let ruler_request = args.style.ruler_request();
     for (sheet_index, sheet) in sheets.iter().enumerate() {
         let sheet_items = &items[sheet.start..sheet.start + sheet.len];
+        let planned_rects = predicted_rects(sheet, sheet_items, &layout);
+        let ruler_steps = ruler_request.map(|requested| {
+            let smallest = planned_rects
+                .iter()
+                .map(|r| (r[2], r[3]))
+                .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1)))
+                .unwrap_or((1, 1));
+            choose_steps(crop, smallest, requested)
+        });
         let labels: Vec<Option<String>> = sheet_items
             .iter()
             .map(|item| template.as_deref().map(|t| expand_label(t, item)))
@@ -211,6 +233,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
                 sheet_index,
                 sheets.len(),
                 args.style.title.as_deref(),
+                ruler_steps,
             )
         });
         let drawn_text = labels
@@ -225,7 +248,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
 
         let mut errors = vec![None; sheet.len];
         let (rects, path, bytes) = if args.dry_run {
-            (predicted_rects(sheet, sheet_items, &layout), None, None)
+            (planned_rects, None, None)
         } else {
             let rendered = source.render(sheet_items, &boxes, &warnings)?;
             log(format!(
@@ -249,6 +272,10 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
                 cells.push(Cell {
                     image: cell.image,
                     label: label.clone(),
+                    ruler: ruler_steps.map(|steps| Ruler {
+                        steps,
+                        crop: item.crop,
+                    }),
                 });
             }
             let (canvas, rects) = compose(
@@ -279,6 +306,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
                 ));
             }
             let path = target.sheet_path(sheet_index, sheets.len(), sheet_format);
+            check_not_input(&path, &input_paths)?;
             write_atomic(&path, &data)?;
             written.push(path.clone());
             (rects, Some(path), Some(data.len()))
@@ -397,16 +425,19 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
 }
 
 /// Flags that only make sense for another input type are errors, not silently ignored.
-fn check_flags(kind: InputKind, args: &RenderArgs) -> Result<(), CliError> {
-    let sel = &args.selection;
-    let pdf_only = [
+/// `more_pdf_only` lists a command's own PDF flags and whether each was given.
+pub fn check_flags(
+    kind: InputKind,
+    sel: &SelectionArgs,
+    source: &SourceArgs,
+    more_pdf_only: &[(&str, bool)],
+) -> Result<(), CliError> {
+    let mut pdf_only = vec![
         ("--pages", sel.pages.is_some()),
-        ("--password", args.source.password.password.is_some()),
-        (
-            "--password-file",
-            args.source.password.password_file.is_some(),
-        ),
+        ("--password", source.password.password.is_some()),
+        ("--password-file", source.password.password_file.is_some()),
     ];
+    pdf_only.extend_from_slice(more_pdf_only);
     let time_only = [
         ("--start", sel.start.is_some()),
         ("--end", sel.end.is_some()),
@@ -448,8 +479,14 @@ pub fn guide_topic(kind: InputKind) -> &'static str {
     }
 }
 
-fn validate_template(template: &str, kind: InputKind) -> Result<(), CliError> {
-    let allowed = label_vars(kind);
+/// Checks that `template` (of `--label` or `--name`, named by `flag`) only uses `allowed`
+/// variables.
+pub fn validate_template(
+    template: &str,
+    flag: &str,
+    allowed: &[&str],
+    kind: InputKind,
+) -> Result<(), CliError> {
     let mut rest = template;
     while let Some(open) = rest.find('{') {
         let after = &rest[open + 1..];
@@ -461,7 +498,7 @@ fn validate_template(template: &str, kind: InputKind) -> Result<(), CliError> {
             return Err(usage(
                 Reason::LabelVariableNotForInput,
                 format!(
-                    "label variable {{{name}}} is not available for {} input",
+                    "{flag} variable {{{name}}} is not available for {} input",
                     kind_name(kind)
                 ),
             )
@@ -491,14 +528,79 @@ fn expand_label(template: &str, item: &Item) -> String {
         .replace("{name}", &opt(v.name.clone()))
 }
 
+/// How a command bounds the frames of a video or animation selection.
+pub struct FrameLimits {
+    /// Frames taken when none of --every, --count and --at is given; `None` requires one.
+    pub default_count: Option<usize>,
+    pub limit: CountLimit,
+}
+
+/// Checked on the number of video timestamps before they are generated.
+pub enum CountLimit {
+    /// `render`: the frames must fit on `max_sheets` sheets of about `per_sheet` cells.
+    Sheets { per_sheet: usize, max_sheets: usize },
+    /// `export`: one file per item, at most this many.
+    Files(usize),
+}
+
+impl CountLimit {
+    pub fn check(&self, count: usize) -> Result<(), CliError> {
+        match *self {
+            // `per_sheet` is exact only below MAX_CAPACITY, so `plan` does the exact check.
+            CountLimit::Sheets {
+                per_sheet,
+                max_sheets,
+            } => {
+                if count > max_sheets.saturating_mul(per_sheet.max(MAX_CAPACITY)) {
+                    check_sheets(count, per_sheet, max_sheets)?;
+                }
+                Ok(())
+            }
+            CountLimit::Files(max_files) if count > max_files => Err(usage(
+                Reason::TooManyFiles,
+                format!("the selection has {count} items, more than --max-files {max_files}"),
+            )
+            .with_hint(format!(
+                "narrow the selection (--pages, --start/--end, --count, --every) or pass --max-files {count}"
+            ))),
+            CountLimit::Files(_) => Ok(()),
+        }
+    }
+}
+
+/// Frames default to as many as fit on one sheet.
+fn frame_limits(source: &Source, crop: Option<Crop>, layout: &Layout) -> FrameLimits {
+    let frame_aspect = match source {
+        Source::Video(video) => Some(video.aspect()),
+        Source::Anim(anim) => Some(anim.aspect()),
+        Source::Pdf(_) | Source::Images(_) => None,
+    };
+    let per_sheet = frame_aspect.map(|aspect| {
+        capacity(
+            aspect * crop.map_or(1.0, |c| c.width / c.height),
+            layout.limits,
+            layout.chrome,
+            &layout.options,
+            MAX_CAPACITY,
+        )
+    });
+    FrameLimits {
+        default_count: per_sheet,
+        limit: CountLimit::Sheets {
+            per_sheet: per_sheet.unwrap_or(1),
+            max_sheets: layout.options.max_sheets,
+        },
+    }
+}
+
 /// Resolves the user's selection into the items to place, in order, cropped if asked.
-fn select_items(
+pub fn select_items(
     source: &Source,
     sel: &SelectionArgs,
     crop: Option<Crop>,
-    layout: &Layout,
+    frames: &FrameLimits,
 ) -> Result<Vec<Item>> {
-    let mut items = select_uncropped(source, sel, crop, layout)?;
+    let mut items = select_uncropped(source, sel, frames)?;
     if let Some(crop) = crop {
         apply_crop(&mut items, crop);
     }
@@ -508,18 +610,8 @@ fn select_items(
 fn select_uncropped(
     source: &Source,
     sel: &SelectionArgs,
-    crop: Option<Crop>,
-    layout: &Layout,
+    frames: &FrameLimits,
 ) -> Result<Vec<Item>> {
-    let one_sheet = |aspect: f64| {
-        capacity(
-            aspect * crop.map_or(1.0, |c| c.width / c.height),
-            layout.limits,
-            layout.chrome,
-            &layout.options,
-            MAX_CAPACITY,
-        )
-    };
     match source {
         Source::Pdf(pdf) => {
             let pages = match &sel.pages {
@@ -530,18 +622,8 @@ fn select_uncropped(
         }
         Source::Images(images) => Ok(images.items()),
         Source::Video(video) => {
-            let cap = one_sheet(video.aspect());
-            let (start, end, sampling) = select_range(sel, video.duration, cap)?;
-            let count = sample_count(start, end, &sampling);
-            // Every timestamp is an item; `cap` is exact only below MAX_CAPACITY, so `plan` does the exact check.
-            if count
-                > layout
-                    .options
-                    .max_sheets
-                    .saturating_mul(cap.max(MAX_CAPACITY))
-            {
-                check_sheets(count, cap, layout.options.max_sheets)?;
-            }
+            let (start, end, sampling) = select_range(sel, video.duration, frames.default_count)?;
+            frames.limit.check(sample_count(start, end, &sampling))?;
             let times = sample_times(start, end, &sampling);
             let long = video.duration.is_some_and(|d| d >= 3600.0);
             let labels = time_labels(&times, long);
@@ -549,7 +631,7 @@ fn select_uncropped(
         }
         Source::Anim(anim) => {
             let (start, end, sampling) =
-                select_range(sel, Some(anim.duration), one_sheet(anim.aspect()))?;
+                select_range(sel, Some(anim.duration), frames.default_count)?;
             let count = sample_count(start, end, &sampling);
             if count > MAX_ANIM_SAMPLES {
                 return Err(usage(
@@ -594,7 +676,7 @@ fn apply_crop(items: &mut [Item], crop: Crop) {
 fn select_range(
     sel: &SelectionArgs,
     duration: Option<f64>,
-    default_count: usize,
+    default_count: Option<usize>,
 ) -> Result<(f64, f64, Sampling), CliError> {
     let start = sel
         .start
@@ -603,8 +685,20 @@ fn select_range(
         .transpose()?
         .unwrap_or(0.0);
     let end = sel.end.as_deref().map(parse_time).transpose()?;
-    let sampling = Sampling::from_args(sel.every.as_deref(), sel.count, sel.at.as_deref())?
-        .unwrap_or(Sampling::Count(default_count));
+    let sampling = match (
+        Sampling::from_args(sel.every.as_deref(), sel.count, sel.at.as_deref())?,
+        default_count,
+    ) {
+        (Some(sampling), _) => sampling,
+        (None, Some(count)) => Sampling::Count(count),
+        (None, None) => {
+            return Err(usage(
+                Reason::InvalidArgument,
+                "choose the frames with --at, --every or --count",
+            )
+            .with_hint("e.g. --at 1:30,2:45 or --every 10s"));
+        }
+    };
 
     let end = match (end, duration) {
         (Some(end), Some(d)) if end > d + 0.5 => {
@@ -650,9 +744,14 @@ fn select_range(
 }
 
 fn time_labels(times: &[f64], long: bool) -> Vec<String> {
-    let fine = min_interval(times).is_some_and(|d| d < 1.0)
-        || times.iter().any(|t| t.fract() != 0.0 && *t < 1.0);
+    let fine = needs_tenths(times);
     times.iter().map(|&t| format_time(t, long, fine)).collect()
+}
+
+/// Whether whole seconds would hide the difference between `times`.
+fn needs_tenths(times: &[f64]) -> bool {
+    min_interval(times).is_some_and(|d| d < 1.0)
+        || times.iter().any(|t| t.fract() != 0.0 && *t < 1.0)
 }
 
 /// Largest native width and height among raster inputs; None for PDFs, which scale freely.
@@ -701,13 +800,37 @@ pub fn natural_width(source: &Source, item: &Item) -> f64 {
     }
 }
 
-fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4], natural_width: f64) -> CellInfo {
+/// What an item shows, as reported in JSON: 1-based page, time in seconds, 1-based frame or
+/// absolute file path.
+pub struct ItemRef {
+    pub page: Option<usize>,
+    pub time: Option<f64>,
+    pub frame: Option<usize>,
+    pub file: Option<String>,
+}
+
+pub fn item_ref(item: &Item) -> ItemRef {
     let (page, time, frame, file) = match &item.key {
         ItemKey::Page(index) => (Some(index + 1), None, None, None),
         ItemKey::Time(t) => (None, Some(round3(*t)), None, None),
         ItemKey::Frame(index, start) => (None, Some(round3(*start)), Some(index + 1), None),
         ItemKey::File(path) => (None, None, None, Some(absolute(path))),
     };
+    ItemRef {
+        page,
+        time,
+        frame,
+        file,
+    }
+}
+
+fn cell_info(item: &Item, label: Option<String>, rect: [u32; 4], natural_width: f64) -> CellInfo {
+    let ItemRef {
+        page,
+        time,
+        frame,
+        file,
+    } = item_ref(item);
     CellInfo {
         index: item.vars.index,
         label,
@@ -740,13 +863,23 @@ fn header_text(
     sheet_index: usize,
     sheet_count: usize,
     title: Option<&str>,
+    ruler_steps: Option<Steps>,
 ) -> Header {
     let sheet_part =
         (sheet_count > 1).then(|| format!("sheet {}/{}", sheet_index + 1, sheet_count));
+    let ruler_part = ruler_steps.map(|steps| format!("ruler {}", steps_label(steps)));
+    let join = |parts: &[Option<String>]| {
+        parts
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
     if let Some(title) = title {
         return Header {
             name: title.to_string(),
-            details: sheet_part.unwrap_or_default(),
+            details: join(&[ruler_part, sheet_part]),
         };
     }
     let first = &items[sheet.start];
@@ -801,11 +934,7 @@ fn header_text(
     });
     Header {
         name,
-        details: [Some(scope), crop_part, sheet_part]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · "),
+        details: join(&[Some(scope), crop_part, ruler_part, sheet_part]),
     }
 }
 
@@ -903,7 +1032,21 @@ pub fn compact_ranges(numbers: &[usize]) -> String {
     parts.join(",")
 }
 
-fn output_stem(source: &Source, inputs: &[PathBuf]) -> String {
+/// Canonical paths of the files read, which outputs must never replace.
+pub fn input_files(source: &Source, inputs: &[PathBuf]) -> Vec<PathBuf> {
+    let paths: Vec<&Path> = match source {
+        Source::Images(images) => images.files.iter().map(|f| f.path.as_path()).collect(),
+        Source::Pdf(_) | Source::Video(_) | Source::Anim(_) => {
+            inputs.iter().map(PathBuf::as_path).collect()
+        }
+    };
+    paths
+        .into_iter()
+        .filter_map(|p| std::fs::canonicalize(p).ok())
+        .collect()
+}
+
+pub fn output_stem(source: &Source, inputs: &[PathBuf]) -> String {
     let stem_of = |p: &Path| {
         p.file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -916,9 +1059,9 @@ fn output_stem(source: &Source, inputs: &[PathBuf]) -> String {
 }
 
 /// Identifies "the same request" (inputs and options) so re-running it overwrites one output directory.
-fn fingerprint(args: &RenderArgs, kind: InputKind) -> String {
+pub fn fingerprint(kind: InputKind, inputs: &[PathBuf], options: String) -> String {
     let mut parts = vec![format!("{kind:?}")];
-    for path in &args.inputs {
+    for path in inputs {
         parts.push(
             std::fs::canonicalize(path)
                 .unwrap_or_else(|_| path.clone())
@@ -926,10 +1069,7 @@ fn fingerprint(args: &RenderArgs, kind: InputKind) -> String {
                 .to_string(),
         );
     }
-    parts.push(format!(
-        "{:?}|{:?}|{:?}|{:?}|{}",
-        args.selection, args.layout, args.style, args.format, args.quality
-    ));
+    parts.push(options);
     parts.join("\n")
 }
 
@@ -976,11 +1116,14 @@ mod tests {
 
     #[test]
     fn templates_only_accept_variables_of_the_input_kind() {
-        assert!(validate_template("p.{page} ({index}/{total})", InputKind::Pdf).is_ok());
-        assert!(validate_template("{time}", InputKind::Pdf).is_err());
-        assert!(validate_template("{frame}", InputKind::Video).is_err());
-        assert!(validate_template("{frame} {time}", InputKind::Anim).is_ok());
-        assert!(validate_template("no variables", InputKind::Images).is_ok());
+        let check = |template: &str, kind: InputKind| {
+            validate_template(template, "label", label_vars(kind), kind)
+        };
+        assert!(check("p.{page} ({index}/{total})", InputKind::Pdf).is_ok());
+        assert!(check("{time}", InputKind::Pdf).is_err());
+        assert!(check("{frame}", InputKind::Video).is_err());
+        assert!(check("{frame} {time}", InputKind::Anim).is_ok());
+        assert!(check("no variables", InputKind::Images).is_ok());
     }
 
     #[test]

@@ -36,12 +36,17 @@ src/
   detect.rs      input type detection (magic bytes, extensions, APNG acTL check)
   select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
-  compose.rs     draws a sheet: header, cells, borders, labels; place() positions images
+  compose.rs     draws a sheet: header, cells, borders, rulers, labels; place() positions
+                 images
   text.rs        font fallback chain (--font files, then embedded BIZ UDGothic), text
                  measuring and drawing; one layout path for both, no shaping
   output.rs      output paths (tmp dir + hash), encoding, JSON structs (serde + schemars),
                  SCHEMA_VERSION
   render.rs      `render` command: wires everything together; shared helpers for `probe`
+                 and `export` (selection, flag checks, templates)
+  export.rs      `export` command: one file per selected item, no sheet layout; file names
+                 from `--name`, PDF size from `--dpi`
+  ruler.rs       pure ruler math: steps in hundredths, ticks in page/frame fractions
   probe.rs       `probe` command: source info, per-detail estimates and scale, `--per-page`
                  PDF analysis, suggested commands
   extract.rs     `text` command: visible PDF text per page with its content type
@@ -73,6 +78,11 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 `select_items` (→ `Vec<Item>`, cropped by `--crop`) → `layout::plan` (→ `Vec<SheetPlan>`)
 → per sheet: `Source::render` → `compose` → `encode` → write → print paths or manifest.
 
+`export::run` shares `detect` → `check_flags` → `Source::open` → `select_items` with
+`render` (video and animations need an explicit sampling: `FrameLimits::default_count` is
+`None`), then sizes each item (`export_size`), names it (`file_names`), and renders and
+writes the items in memory-bounded batches without `compose`.
+
 `probe` and `text` scan PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
 summarize them with `pagetext::summarize`.
 
@@ -83,7 +93,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 
 ## Invariants (do not break)
 
-- **Sheets never exceed `Limits`.** Every sheet satisfies `layout::fits()`, which mirrors
+- **Sheets never exceed `Limits`.** (`export` writes files, not sheets: they keep native
+  size or `--dpi`, capped by `export::MAX_EDGE` and `MAX_PIXELS`.) Every sheet satisfies `layout::fits()`, which mirrors
   the model's resize rule (`Limits::rule`). For `ImageRule::ClaudePatch`: each edge rounded
   up to 28 px ≤ `max_edge`, and `ceil(w/28) * ceil(h/28)` ≤ `max_tokens`. Presets:
   `compat` 1568/1568, `hires` 2576/4784. The test `grids_never_exceed_limits` checks
@@ -95,8 +106,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   native size. With `--crop`, both describe the cropped region.
 - **Probe numbers equal render numbers.** `probe` computes `scale` from `layout::plan`
   with real default `RenderArgs`, the same path `render` uses.
-- **Output contract.** For `render`, stdout carries only sheet paths (one absolute path
-  per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
+- **Output contract.** For `render` and `export`, stdout carries only output paths (one
+  absolute path per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
   `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
   printed as `{"error": {...}}` on stdout. For `mcp`, stdout carries only JSON-RPC
@@ -107,10 +118,14 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   changing them run `GRIDITY_UPDATE_SCHEMA=1 cargo test committed_schemas` and commit the
   result. `reason` names (`error::Reason`) are never renamed, and each is listed in
   `docs/guide/output.md` (a unit test checks this).
-- **Computing is separate from printing.** `render::execute`, `probe::report` and
-  `extract::report` return values and never write to stdout; their `run` functions print.
+- **Computing is separate from printing.** `render::execute`, `export::execute`,
+  `probe::report` and `extract::report` return values and never write to stdout; their `run` functions print.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
-  Label templates may only use the variables of the input kind (`label_vars`).
+  Label and `--name` templates may only use the variables of the input kind (`label_vars`,
+  `export::name_vars`).
+- **Rulers and crops share page coordinates.** `--crop` is always relative to the whole
+  page or frame, and ruler values are too, also inside a cropped cell. Rulers are drawn
+  over placed images only; they never change the layout or the manifest.
 - **Deterministic output location.** The default directory hashes the input paths and
   options (`render::fingerprint`), not the time or mtime, so a re-run overwrites the same
   files. `Target::remove_stale` deletes old sheets only in that gridity-managed directory.

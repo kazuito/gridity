@@ -202,19 +202,40 @@ fn parse_unit_time(text: &str) -> Option<f64> {
 /// Formats seconds as m:ss or h:mm:ss, with one decimal when `fine` is set.
 /// Truncates like a media player, so the label never runs ahead of the frame shown.
 pub fn format_time(seconds: f64, long: bool, fine: bool) -> String {
-    let tenths = (seconds.max(0.0) * 10.0 + 1e-6).floor() as u64;
-    let whole = tenths / 10;
-    let (h, m, s) = (whole / 3600, (whole / 60) % 60, whole % 60);
+    let (h, m, s, tenth) = time_parts(seconds);
     let base = if long || h > 0 {
         format!("{h}:{m:02}:{s:02}")
     } else {
         format!("{m}:{s:02}")
     };
     if fine {
-        format!("{base}.{}", tenths % 10)
+        format!("{base}.{tenth}")
     } else {
         base
     }
+}
+
+/// Like `format_time`, for file names: 05m30s, 1h02m03s or 05m30.5s, which sort in order
+/// and contain no colon.
+pub fn format_file_time(seconds: f64, long: bool, fine: bool) -> String {
+    let (h, m, s, tenth) = time_parts(seconds);
+    let secs = if fine {
+        format!("{s:02}.{tenth}")
+    } else {
+        format!("{s:02}")
+    };
+    if long || h > 0 {
+        format!("{h}h{m:02}m{secs}s")
+    } else {
+        format!("{m:02}m{secs}s")
+    }
+}
+
+/// Hours, minutes, seconds and tenths, truncated.
+fn time_parts(seconds: f64) -> (u64, u64, u64, u64) {
+    let tenths = (seconds.max(0.0) * 10.0 + 1e-6).floor() as u64;
+    let whole = tenths / 10;
+    (whole / 3600, (whole / 60) % 60, whole % 60, tenths % 10)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,6 +451,15 @@ mod tests {
         assert_eq!(format_time(0.3, false, true), "0:00.3");
         assert_eq!(format_time(3725.0, false, false), "1:02:05");
         assert_eq!(format_time(5.0, true, false), "0:00:05");
+    }
+
+    #[test]
+    fn file_times_sort_and_have_no_colon() {
+        assert_eq!(format_file_time(825.0, false, false), "13m45s");
+        assert_eq!(format_file_time(5.0, false, false), "00m05s");
+        assert_eq!(format_file_time(825.56, false, true), "13m45.5s");
+        assert_eq!(format_file_time(3723.0, false, false), "1h02m03s");
+        assert_eq!(format_file_time(5.0, true, false), "0h00m05s");
     }
 
     #[test]

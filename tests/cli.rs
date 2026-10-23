@@ -1797,3 +1797,245 @@ fn mcp_suggested_media_calls_succeed_as_they_are() {
         "30 images should need 5-10 sheets at the default detail"
     );
 }
+
+#[test]
+fn ruler_leaves_the_layout_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0), (595, 842, 0)]);
+    let args = ["render", s(&pdf), "--crop", "0,0.3,0.5,0.7"];
+    let plain = run_json(&[&args[..], &["-o", s(&dir.path().join("plain"))]].concat());
+    let ruled = run_json(&[&args[..], &["--ruler", "-o", s(&dir.path().join("ruled"))]].concat());
+    assert_eq!(plain["sheets"][0]["cells"], ruled["sheets"][0]["cells"]);
+    assert_ne!(plain["sheets"][0]["path"], ruled["sheets"][0]["path"]);
+    run_json(&[&args[..], &["--ruler-step", "0.05", "--dry-run"]].concat());
+
+    let error = run_error_json(&[&args[..], &["--ruler-step", "0.025"]].concat());
+    assert_eq!(error["reason"], "invalid_argument");
+    gridity()
+        .args(["render", s(&pdf), "--ruler-step", "0.6"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("between 0.01 and 0.5"));
+}
+
+#[test]
+fn export_writes_pdf_regions_at_the_requested_dpi() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0), (595, 842, 0), (842, 595, 0)]);
+    let out = dir.path().join("figs/fig.png");
+    let args = [
+        "export",
+        s(&pdf),
+        "--pages",
+        "2",
+        "--crop",
+        "0,0.5,1,0.5",
+        "--dpi",
+        "144",
+        "-o",
+        s(&out),
+    ];
+    let planned = run_json(&[&args[..], &["--dry-run"]].concat());
+    let manifest = run_json(&args);
+    let file = &manifest["files"][0];
+    assert_eq!(manifest["files"].as_array().unwrap().len(), 1);
+    assert_eq!(file["path"], planned["files"][0]["path"]);
+    assert!(file["path"].as_str().unwrap().ends_with("fig.png"));
+    assert_eq!(
+        (file["width"].as_u64(), file["height"].as_u64()),
+        (Some(1190), Some(842))
+    );
+    assert_eq!(file["page"], 2);
+    assert_eq!(file["scale"], 2.0);
+    assert_eq!(file["crop"], serde_json::json!([0.0, 0.5, 1.0, 0.5]));
+    assert_eq!(image::image_dimensions(&out).unwrap(), (1190, 842));
+    assert!(planned["files"][0].get("bytes").is_none());
+    assert!(file["bytes"].as_u64().unwrap() > 0);
+
+    let shrunk = run_json(&[
+        "export",
+        s(&pdf),
+        "--pages",
+        "3",
+        "--max-edge",
+        "421",
+        "--dry-run",
+    ]);
+    let file = &shrunk["files"][0];
+    assert_eq!(
+        (file["width"].as_u64(), file["height"].as_u64()),
+        (Some(421), Some(297))
+    );
+
+    let error = run_error_json(&["export", s(&pdf), "--dpi", "1200"]);
+    assert_eq!(error["reason"], "does_not_fit");
+    assert!(error["hint"].as_str().unwrap().contains("--dpi"));
+}
+
+#[test]
+fn export_names_one_file_per_item() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(200, 300, 0); 12]);
+    let names = |manifest: &Value| -> Vec<String> {
+        manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let path = Path::new(f["path"].as_str().unwrap());
+                path.file_name().unwrap().to_str().unwrap().to_string()
+            })
+            .collect()
+    };
+    let pages_dir = dir.path().join("pages");
+    let manifest = run_json(&["export", s(&pdf), "--pages", "9-10", "-o", s(&pages_dir)]);
+    assert_eq!(names(&manifest), ["doc-p09.png", "doc-p10.png"]);
+    assert!(pages_dir.join("doc-p09.png").is_file());
+
+    let manifest = run_json(&[
+        "export",
+        s(&pdf),
+        "--pages",
+        "1,3",
+        "--name",
+        "../{index}of{total} p{page}",
+        "--format",
+        "jpeg",
+        "-o",
+        s(&pages_dir),
+    ]);
+    assert_eq!(names(&manifest), ["_1of2_p01.jpg", "_2of2_p03.jpg"]);
+
+    let numbered = dir.path().join("sheet.png");
+    let manifest = run_json(&["export", s(&pdf), "--pages", "1-2", "-o", s(&numbered)]);
+    assert_eq!(names(&manifest), ["sheet-01.png", "sheet-02.png"]);
+
+    let error = run_error_json(&["export", s(&pdf), "--name", "{stem}", "-o", s(&pages_dir)]);
+    assert_eq!(error["reason"], "invalid_value");
+    assert!(error["hint"].as_str().unwrap().contains("{index}"));
+    let error = run_error_json(&["export", s(&pdf), "--name", "{time}"]);
+    assert_eq!(error["reason"], "label_variable_not_for_input");
+    let error = run_error_json(&["export", s(&pdf), "--name", "x", "-o", s(&numbered)]);
+    assert_eq!(error["reason"], "invalid_argument");
+    let error = run_error_json(&["export", s(&pdf), "--max-files", "5"]);
+    assert_eq!(error["reason"], "too_many_files");
+    assert!(error["hint"].as_str().unwrap().contains("--max-files 12"));
+}
+
+#[test]
+fn export_keeps_raster_inputs_at_native_size() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 120, 90, 0);
+    let manifest = run_json(&[
+        "export",
+        s(&png),
+        "--crop",
+        "0,0,0.5,1",
+        "-o",
+        s(&dir.path().join("out")),
+    ]);
+    let file = &manifest["files"][0];
+    assert!(file["path"].as_str().unwrap().ends_with("a.png"));
+    assert_eq!(
+        (file["width"].as_u64(), file["height"].as_u64()),
+        (Some(60), Some(90))
+    );
+    assert_eq!(file["scale"], 1.0);
+
+    let manifest = run_json(&["export", s(&png), "--max-edge", "30", "--dry-run"]);
+    let file = &manifest["files"][0];
+    assert_eq!(
+        (file["width"].as_u64(), file["height"].as_u64()),
+        (Some(30), Some(23))
+    );
+    let manifest = run_json(&["export", s(&png), "--max-edge", "1000", "--dry-run"]);
+    assert_eq!(manifest["files"][0]["width"], 120);
+
+    let error = run_error_json(&["export", s(&png), "--dpi", "300"]);
+    assert_eq!(error["reason"], "flag_not_for_input");
+
+    let gif = dir.path().join("anim.gif");
+    write_gif(&gif, 4, 100);
+    let error = run_error_json(&["export", s(&gif)]);
+    assert_eq!(error["reason"], "invalid_argument");
+    assert!(error["message"].as_str().unwrap().contains("--at"));
+    let manifest = run_json(&[
+        "export",
+        s(&gif),
+        "--count",
+        "4",
+        "-o",
+        s(&dir.path().join("gif")),
+    ]);
+    let files = manifest["files"].as_array().unwrap();
+    assert_eq!(files.len(), 4);
+    assert!(files[3]["path"].as_str().unwrap().ends_with("anim-f4.jpg"));
+    assert_eq!(files[3]["frame"], 4);
+}
+
+#[test]
+fn export_video_frames_by_time() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("clip.mp4");
+    write_video(&video, &[]);
+    let manifest = run_json(&[
+        "export",
+        s(&video),
+        "--at",
+        "1,2.5",
+        "--crop",
+        "0.5,0,0.5,0.5",
+        "-o",
+        s(&dir.path().join("frames")),
+    ]);
+    let files = manifest["files"].as_array().unwrap();
+    assert!(
+        files[0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("clip-00m01.0s.jpg")
+    );
+    assert!(
+        files[1]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("clip-00m02.5s.jpg")
+    );
+    assert_eq!(files[1]["time"], 2.5);
+    let path = files[0]["path"].as_str().unwrap();
+    assert_eq!(image::image_dimensions(path).unwrap(), (160, 90));
+    assert_eq!(
+        (files[0]["width"].as_u64(), files[0]["height"].as_u64()),
+        (Some(160), Some(90))
+    );
+}
+
+#[test]
+fn outputs_never_replace_their_inputs() {
+    let dir = TempDir::new().unwrap();
+    let shots = dir.path().join("shots");
+    std::fs::create_dir(&shots).unwrap();
+    let png = shots.join("a.png");
+    write_png(&png, 40, 30, 0);
+    let original = std::fs::read(&png).unwrap();
+
+    let error = run_error_json(&["export", s(&shots), "--crop", "0,0,1,0.5", "-o", s(&shots)]);
+    assert_eq!(error["reason"], "invalid_value");
+    assert!(error["message"].as_str().unwrap().contains("is an input"));
+    let error = run_error_json(&["export", s(&png), "-o", s(&png)]);
+    assert_eq!(error["reason"], "invalid_value");
+    let error = run_error_json(&["render", s(&png), "-o", s(&png)]);
+    assert_eq!(error["reason"], "invalid_value");
+    assert_eq!(std::fs::read(&png).unwrap(), original);
+
+    run_json(&["export", s(&shots), "--name", "{name}-top", "-o", s(&shots)]);
+    assert!(shots.join("a-top.png").is_file());
+}

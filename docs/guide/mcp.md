@@ -33,7 +33,7 @@ files, are never read);
 | `guide` | this documentation; `topic` is a guide topic or `all` |
 
 Parameters are the CLI options with underscores: `per_sheet` for `--per-sheet`, `type` for
-`--type`, booleans for switches (`no_header: true`). Inputs are `inputs` (a list) for
+`--type`, booleans for switches (`no_header: true`, `ruler: true`). `export` is CLI only. Inputs are `inputs` (a list) for
 `render` and `probe`, and `input` for `text`. `render` returns `images: false` results
 without image blocks when only the manifest is needed. Error messages and hints name the
 tool parameters (`max_sheets 6`, not `--max-sheets 6`); a flag marked `(CLI only)` has no

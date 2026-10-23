@@ -3,9 +3,16 @@ use image::{Rgba, RgbaImage, imageops};
 use crate::cli::LabelPos;
 use crate::color::is_dark;
 use crate::layout::{Chrome, Grid};
+use crate::ruler::{Steps, Tick, tick_label, ticks};
+use crate::select::Crop;
 use crate::text::{Fonts, draw_text, fit_middle, fit_text, line_height, text_width};
 
 pub const HEADER_SIZE: f32 = 17.0;
+const RULER_SIZE: f32 = 12.0;
+const RULER_DARK: Rgba<u8> = Rgba([0, 0, 0, 140]);
+const RULER_LIGHT: Rgba<u8> = Rgba([255, 255, 255, 140]);
+const RULER_TEXT: Rgba<u8> = Rgba([255, 255, 255, 255]);
+const RULER_TEXT_BG: Rgba<u8> = Rgba([0, 0, 0, 170]);
 
 #[derive(Debug, Clone)]
 pub struct Style {
@@ -94,6 +101,15 @@ pub fn header_line(font: &Fonts, header: &Header, max_width: u32) -> String {
 pub struct Cell {
     pub image: RgbaImage,
     pub label: Option<String>,
+    pub ruler: Option<Ruler>,
+}
+
+/// Ruler over a cell: steps in hundredths, values relative to the whole page or frame of
+/// which the cell shows `crop`.
+#[derive(Debug, Clone, Copy)]
+pub struct Ruler {
+    pub steps: Steps,
+    pub crop: Option<Crop>,
 }
 
 /// Rectangle of a placed image on the sheet: x, y, width, height.
@@ -156,7 +172,17 @@ pub fn compose(
         imageops::overlay(&mut canvas, &cell.image, x as i64, y as i64);
         rects.push([x, y, w, h]);
 
-        if let Some(label) = cell.label.as_deref().filter(|l| !l.is_empty()) {
+        let label = cell.label.as_deref().filter(|l| !l.is_empty());
+        let badge = match (label, style.label_pos) {
+            (Some(label), Some(LabelPos::Overlay)) => Some(overlay_badge(font, style, label, w)),
+            _ => None,
+        };
+        if let Some(ruler) = cell.ruler {
+            let avoid = badge.as_ref().map(|(_, bw, bh)| [x, y, *bw, *bh]);
+            draw_ruler(&mut canvas, font, [x, y, w, h], ruler, avoid);
+        }
+
+        if let Some(label) = label {
             match style.label_pos {
                 Some(LabelPos::Below) => {
                     let strip_y = slot_y + grid.cell_height;
@@ -172,7 +198,9 @@ pub fn compose(
                     );
                 }
                 Some(LabelPos::Overlay) => {
-                    draw_label_overlay(&mut canvas, font, style, label, x, y, w)
+                    if let Some((text, bw, bh)) = &badge {
+                        draw_label_overlay(&mut canvas, font, style, text, x, y, (*bw, *bh));
+                    }
                 }
                 None => {}
             }
@@ -211,37 +239,113 @@ fn draw_label_below(
     );
 }
 
-fn draw_label_overlay(
-    canvas: &mut RgbaImage,
-    font: &Fonts,
-    style: &Style,
-    label: &str,
-    x: u32,
-    y: u32,
-    max_width: u32,
-) {
-    let pad_x = 5;
-    let pad_y = 2;
+const BADGE_PAD_X: u32 = 5;
+const BADGE_PAD_Y: u32 = 2;
+
+/// The overlay label text that fits in `max_width`, and the badge's width and height.
+fn overlay_badge(font: &Fonts, style: &Style, label: &str, max_width: u32) -> (String, u32, u32) {
     let text = fit_text(
         font,
         style.label_size,
         label,
-        max_width.saturating_sub(2 * pad_x),
+        max_width.saturating_sub(2 * BADGE_PAD_X),
     );
-    let text_w = text_width(font, style.label_size, &text);
-    let text_h = line_height(font, style.label_size);
+    let width = text_width(font, style.label_size, &text) + 2 * BADGE_PAD_X;
+    let height = line_height(font, style.label_size) + 2 * BADGE_PAD_Y;
+    (text, width, height)
+}
+
+fn draw_label_overlay(
+    canvas: &mut RgbaImage,
+    font: &Fonts,
+    style: &Style,
+    text: &str,
+    x: u32,
+    y: u32,
+    (width, height): (u32, u32),
+) {
     if let Some(bg) = style.label_bg {
-        fill_rect(canvas, x, y, text_w + 2 * pad_x, text_h + 2 * pad_y, bg);
+        fill_rect(canvas, x, y, width, height, bg);
     }
     draw_text(
         canvas,
         font,
         style.label_size,
-        (x + pad_x) as i32,
-        (y + pad_y) as i32,
+        (x + BADGE_PAD_X) as i32,
+        (y + BADGE_PAD_Y) as i32,
         style.label_color,
-        &text,
+        text,
     );
+}
+
+/// Two-tone lines across the image, visible on light and dark content, with their values on
+/// dark boxes along the top and left edges. A value is left out where it would leave the image, touch
+/// another value or cover `avoid` (the overlay label).
+fn draw_ruler(
+    canvas: &mut RgbaImage,
+    font: &Fonts,
+    rect: CellRect,
+    ruler: Ruler,
+    avoid: Option<CellRect>,
+) {
+    let [x, y, w, h] = rect;
+    let crop = ruler.crop.unwrap_or(Crop {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    });
+    let columns = ticks(crop.x, crop.width, w, ruler.steps.x);
+    let rows = ticks(crop.y, crop.height, h, ruler.steps.y);
+    for tick in &columns {
+        fill_rect(canvas, x + tick.pos, y, 1, h, RULER_DARK);
+        fill_rect(canvas, x + tick.pos + 1, y, 1, h, RULER_LIGHT);
+    }
+    for tick in &rows {
+        fill_rect(canvas, x, y + tick.pos, w, 1, RULER_DARK);
+        fill_rect(canvas, x, y + tick.pos + 1, w, 1, RULER_LIGHT);
+    }
+
+    let box_h = line_height(font, RULER_SIZE) + 2;
+    let mut taken: Vec<CellRect> = avoid.into_iter().collect();
+    let mut place_value = |tick: &Tick, horizontal: bool| {
+        let text = tick_label(tick.value);
+        let box_w = text_width(font, RULER_SIZE, &text) + 4;
+        let (bx, by) = if horizontal {
+            (x + tick.pos + 2, y)
+        } else {
+            (x, y + tick.pos + 2)
+        };
+        let value_box = [bx, by, box_w, box_h];
+        let fits = bx + box_w <= x + w && by + box_h <= y + h;
+        if fits && taken.iter().all(|r| !overlaps(value_box, *r, 2)) {
+            fill_rect(canvas, bx, by, box_w, box_h, RULER_TEXT_BG);
+            draw_text(
+                canvas,
+                font,
+                RULER_SIZE,
+                bx as i32 + 2,
+                by as i32 + 1,
+                RULER_TEXT,
+                &text,
+            );
+            taken.push(value_box);
+        }
+    };
+    for tick in &columns {
+        place_value(tick, true);
+    }
+    for tick in &rows {
+        place_value(tick, false);
+    }
+}
+
+/// Whether two rectangles come closer than `margin` pixels.
+fn overlaps(a: CellRect, b: CellRect, margin: u32) -> bool {
+    a[0] < b[0] + b[2] + margin
+        && b[0] < a[0] + a[2] + margin
+        && a[1] < b[1] + b[3] + margin
+        && b[1] < a[1] + a[3] + margin
 }
 
 /// Sets a 1 px frame just outside `rect`, clipped to the canvas.

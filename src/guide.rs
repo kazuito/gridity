@@ -7,6 +7,7 @@ const TOPICS: &[(&str, &str)] = &[
     ("text", include_str!("../docs/guide/text.md")),
     ("video", include_str!("../docs/guide/video.md")),
     ("images", include_str!("../docs/guide/images.md")),
+    ("export", include_str!("../docs/guide/export.md")),
     ("layout", include_str!("../docs/guide/layout.md")),
     ("output", include_str!("../docs/guide/output.md")),
     ("mcp", include_str!("../docs/guide/mcp.md")),

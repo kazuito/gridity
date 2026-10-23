@@ -7,7 +7,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::color::parse_color;
+use crate::export::{DEFAULT_MAX_FILES, MAX_EDGE, MAX_FILES};
 use crate::layout::{DEFAULT_MAX_SHEETS, MAX_SHEETS};
+use crate::ruler::parse_step;
 
 const RENDER_EXAMPLES: &str = "\
 Examples:
@@ -28,6 +30,17 @@ Examples:
 
 Each page starts with a line like `--- p.3 · mixed · body 11pt ---`. Pages marked
 `mixed` or `graphics` have figures or text that cannot be extracted: render them.";
+
+const EXPORT_EXAMPLES: &str = "\
+Examples:
+  gridity export slides.pdf --pages 6 --crop 0.53,0.76,0.42,0.1 -o figs/lts.png
+  gridity export slides.pdf --pages 3-5 --dpi 300 -o figs/
+  gridity export talk.mp4 --at 13:45,38:25 --crop 0.07,0,0.8,1 -o frames/
+  gridity export shots/ --crop 0,0,1,0.5 --max-edge 800
+
+One file per page, frame or image, without header, labels or size limits; --pages, --at
+and --crop take the same values as in render.
+Output: absolute paths of the written files, one per line (or JSON with --json).";
 
 const ROOT_HELP: &str = "\
 Run `gridity render --help` for all options.
@@ -52,6 +65,13 @@ pub enum Command {
     Render(Box<RenderArgs>),
     /// Show page count, duration, resolution and sheet estimates for an input
     Probe(ProbeArgs),
+    /// Write each selected page, frame or image (or its --crop region) to its own file
+    #[command(
+        after_help = EXPORT_EXAMPLES,
+        mut_arg("count", |a| a.help("Take N evenly spaced frames (video and animations need --count, --every or --at)")),
+        mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half [default: whole]")),
+    )]
+    Export(Box<ExportArgs>),
     /// Print the visible text of PDF pages, with each page's content type
     #[command(after_help = TEXT_EXAMPLES)]
     Text(TextArgs),
@@ -311,6 +331,16 @@ pub struct StyleArgs {
     #[arg(long, value_name = "COLOR", value_parser = parse_color, help_heading = "Style")]
     pub label_bg: Option<Rgba<u8>>,
 
+    /// Draw a ruler over every cell: lines with values in fractions of the whole page or
+    /// frame, the coordinates --crop takes, so read values can be passed on as they are
+    #[arg(long, help_heading = "Style")]
+    pub ruler: bool,
+
+    /// Ruler step in fractions, a multiple of 0.01 up to 0.5 (implies --ruler; coarsened where
+    /// lines would crowd) [default: about ten intervals across the shown range]
+    #[arg(long, value_name = "STEP", value_parser = parse_step, help_heading = "Style")]
+    pub ruler_step: Option<u32>,
+
     /// TTF/OTF/TTC font for header and labels; repeat to add fallbacks. Each character uses
     /// the first font that has it, then the embedded BIZ UDGothic (Japanese and Latin)
     #[arg(long, value_name = "PATH", help_heading = "Style")]
@@ -326,6 +356,82 @@ fn parse_label_size(text: &str) -> Result<f32, String> {
     } else {
         Err("must be between 4 and 200".to_string())
     }
+}
+
+impl StyleArgs {
+    /// `Some(step)` when a ruler is drawn; the step is `None` when chosen automatically.
+    pub fn ruler_request(&self) -> Option<Option<u32>> {
+        (self.ruler || self.ruler_step.is_some()).then_some(self.ruler_step)
+    }
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ExportArgs {
+    /// Input file(s). Several images or a directory of images are allowed
+    #[arg(required = true, value_name = "INPUT")]
+    pub inputs: Vec<PathBuf>,
+
+    /// Input type (detected from the file when omitted)
+    #[arg(long = "type", value_enum, value_name = "TYPE")]
+    pub kind: Option<InputKind>,
+
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    #[command(flatten)]
+    pub selection: SelectionArgs,
+
+    /// Resolution of PDF pages in dots per inch (36-1200) [default: 150]
+    #[arg(long, value_name = "DPI", value_parser = clap::value_parser!(u32).range(36..=1200), help_heading = "PDF")]
+    pub dpi: Option<u32>,
+
+    /// Output directory, or a file name with an image extension (numbered when there are
+    /// several items) [default: $TMPDIR/gridity-<uid>/<name>-export-<hash>/]
+    #[arg(short, long, value_name = "PATH", help_heading = "Output")]
+    pub output: Option<PathBuf>,
+
+    /// File name without extension. Variables: {stem} (input name) {index} {total} {page}
+    /// {time} (e.g. 13m45s) {frame} {name} (image file name) [default: {stem}-p{page} for PDF,
+    /// {stem}-{time} for video, {stem}-f{frame} for animations, {name} for images]
+    #[arg(long, value_name = "TEMPLATE", help_heading = "Output")]
+    pub name: Option<String>,
+
+    /// Image format [default: png for PDF/images, jpeg for video/animations]
+    #[arg(long, value_enum, help_heading = "Output")]
+    pub format: Option<Format>,
+
+    /// JPEG quality (1-100)
+    #[arg(long, default_value_t = 85, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
+    pub quality: u8,
+
+    /// Shrink each file so its long edge is at most PX; never enlarges [default: native size,
+    /// or --dpi for PDF]
+    #[arg(long, value_name = "PX", value_parser = clap::value_parser!(u32).range(1..=MAX_EDGE as i64), help_heading = "Output")]
+    pub max_edge: Option<u32>,
+
+    /// Fail instead of writing more files than this
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_FILES, value_parser = RangedU64ValueParser::<usize>::new().range(1..=MAX_FILES as u64), help_heading = "Output")]
+    pub max_files: usize,
+
+    /// Print a JSON manifest (paths, sizes, pages or times) instead of plain paths
+    #[arg(long, help_heading = "Output")]
+    pub json: bool,
+
+    /// Print the files that would be written, with their sizes, without writing them
+    #[arg(long, help_heading = "Output")]
+    pub dry_run: bool,
+
+    /// Suppress warnings on stderr
+    #[arg(short, long, help_heading = "Output")]
+    pub quiet: bool,
+
+    /// Print progress details on stderr
+    #[arg(short, long, help_heading = "Output")]
+    pub verbose: bool,
+
+    /// Number of parallel workers, 1-256 [default: min(CPU cores, 8)]
+    #[arg(short, long, value_name = "N", value_parser = RangedU64ValueParser::<usize>::new().range(1..=256))]
+    pub jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone, Args)]

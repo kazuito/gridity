@@ -3,6 +3,7 @@ mod color;
 mod compose;
 mod detect;
 mod error;
+mod export;
 mod extract;
 mod guide;
 mod layout;
@@ -11,6 +12,7 @@ mod output;
 mod pagetext;
 mod probe;
 mod render;
+mod ruler;
 mod select;
 mod source;
 mod text;
@@ -32,12 +34,14 @@ fn main() -> ExitCode {
     };
     let json = match &cli.command {
         Command::Render(args) => args.json,
+        Command::Export(args) => args.json,
         Command::Probe(args) => args.json,
         Command::Text(args) => args.json,
         Command::Guide(_) | Command::Mcp(_) => false,
     };
     configure_threads(match &cli.command {
         Command::Render(args) => args.jobs,
+        Command::Export(args) => args.jobs,
         Command::Mcp(args) => args.jobs,
         _ => None,
     });
@@ -45,6 +49,7 @@ fn main() -> ExitCode {
     // A panic still ends with an exit code and, with --json, a JSON error.
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| match cli.command {
         Command::Render(args) => render::run(*args),
+        Command::Export(args) => export::run(*args),
         Command::Probe(args) => probe::run(args),
         Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),

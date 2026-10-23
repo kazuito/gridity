@@ -35,21 +35,33 @@ gridity render paper.pdf --pages 7 --per-sheet 1 --preset hires   # largest poss
 
 ## Zoom into part of a cell
 
-Find the region in the sheet, then convert it to fractions of the cell's `rect` from the
-manifest:
-
-```
-X = (region_x - rect.x) / rect.width     W = region_width / rect.width
-Y = (region_y - rect.y) / rect.height    H = region_height / rect.height
-```
+Render with `--ruler`, read the values at the edges of the region, and pass them as
+`--crop X,Y,W,H` (`W` = right − left, `H` = bottom − top):
 
 ```sh
-gridity render paper.pdf --pages 7 --crop 0.1,0.55,0.8,0.3        # PDF: re-rendered sharp
-gridity render talk.mp4 --at 12:30 --crop 0.5,0,0.5,0.5            # top-right quarter
+gridity render paper.pdf --pages 7 --ruler                          # region is .1–.9 across, .55–.85 down
+gridity render paper.pdf --pages 7 --crop 0.1,0.55,0.8,0.3 --ruler  # PDF: re-rendered sharp
+gridity render talk.mp4 --at 12:30 --crop 0.5,0,0.5,0.5 --ruler     # top-right quarter
 ```
+
+The ruler of a cropped cell still shows whole-page values, so each further zoom reuses the
+numbers as they are. Reading positions in sheet pixels is less reliable: if you do, convert
+them with the cell's `rect` from the manifest (`X = crop.x + (region_x - rect.x) /
+rect.width * crop.width`, and likewise for Y, W, H).
 
 PDF crops are rendered at the cell size, so a small region gets many pixels. Raster
 inputs are never upscaled: a crop of a small image stays small.
+
+## Save a figure or frame
+
+```sh
+gridity export paper.pdf --pages 7 --crop 0.1,0.55,0.8,0.3 -o figs/chart.png   # 150 dpi
+gridity export paper.pdf --pages 7 --crop 0.1,0.55,0.8,0.3 --dpi 300 -o figs/
+gridity export talk.mp4 --at 12:30,14:05 -o frames/                            # native size
+```
+
+`export` takes the same selection as `render` and writes each item to its own file with
+no sheet layout (`gridity guide export`).
 
 ## Understand a video
 

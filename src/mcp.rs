@@ -32,7 +32,8 @@ const MAX_RESULT_BASE64_BYTES: usize = 20_000_000;
 const INSTRUCTIONS: &str = "gridity arranges PDF pages, video frames, GIF/APNG frames and \
 images into labeled grid sheets sized for Claude's vision limits. Typical flow: probe the \
 input (its suggested_calls are ready-made tool calls), read PDF text pages with `text` (long \
-documents come in parts: follow next_pages), then `render` only what needs to be seen. Call \
+documents come in parts: follow next_pages), then `render` only what needs to be seen. To \
+zoom in, render with `ruler: true` and pass the values read off the ruler as `crop`. Call \
 `guide` for options and recipes.";
 
 #[derive(Deserialize, JsonSchema)]
@@ -85,6 +86,12 @@ struct RenderParams {
     no_header: Option<bool>,
     /// Do not draw labels.
     no_label: Option<bool>,
+    /// Draw a ruler over every cell, valued in fractions of the whole page or frame (the
+    /// coordinates crop takes, also inside a cropped cell).
+    ruler: Option<bool>,
+    /// Ruler step, a multiple of 0.01 up to 0.5 (implies ruler; default automatic).
+    #[schemars(range(min = 0.01, max = 0.5))]
+    ruler_step: Option<f64>,
     /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
     password_file: Option<String>,
     /// Return the sheets as images (default true); false returns paths and the manifest only.
@@ -289,6 +296,8 @@ impl Server {
         argv.value("title", p.title);
         argv.switch("no-header", p.no_header);
         argv.switch("no-label", p.no_label);
+        argv.switch("ruler", p.ruler);
+        argv.value("ruler-step", p.ruler_step);
         argv.value("password-file", self.password_file(p.password_file)?);
         let Command::Render(args) = argv.parse(self.inputs(p.inputs)?)? else {
             unreachable!("argv starts with render")

@@ -36,18 +36,7 @@ impl Target {
     pub fn resolve(output: Option<&Path>, stem: &str, fingerprint: &str) -> Result<Target> {
         let stem = sanitize(stem);
         let target = match output {
-            Some(path) if format_from_extension(path).is_some() => Target {
-                dir: path
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."))
-                    .to_path_buf(),
-                base: path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or(stem),
-                managed: false,
-            },
+            Some(path) if format_from_extension(path).is_some() => Target::file(path, stem),
             Some(dir) => Target {
                 dir: dir.to_path_buf(),
                 base: format!("{stem}.grid"),
@@ -60,6 +49,45 @@ impl Target {
             },
         };
         Ok(target)
+    }
+
+    /// For `export`: `-o` with an image extension is a file name, numbered for several items;
+    /// otherwise files named per item go to `-o` or `$TMPDIR/gridity-<uid>/<stem>-export-<hash>/`.
+    pub fn resolve_export(output: Option<&Path>, stem: &str, fingerprint: &str) -> Target {
+        let stem = sanitize(stem);
+        match output {
+            Some(path) if format_from_extension(path).is_some() => Target::file(path, stem),
+            Some(dir) => Target {
+                dir: dir.to_path_buf(),
+                base: String::new(),
+                managed: false,
+            },
+            None => Target {
+                dir: default_root().join(format!("{stem}-export-{:016x}", fnv1a(fingerprint))),
+                base: String::new(),
+                managed: true,
+            },
+        }
+    }
+
+    fn file(path: &Path, fallback_stem: String) -> Target {
+        Target {
+            dir: path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
+                .to_path_buf(),
+            base: path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or(fallback_stem),
+            managed: false,
+        }
+    }
+
+    /// `name` (already a safe file name) with the format's extension, inside the directory.
+    pub fn named_path(&self, name: &str, format: Format) -> PathBuf {
+        absolute(&self.dir.join(format!("{name}.{}", extension(format))))
     }
 
     pub fn sheet_path(&self, index: usize, total: usize, format: Format) -> PathBuf {
@@ -208,6 +236,17 @@ pub fn encode(image: &RgbaImage, format: Format, quality: u8) -> Result<Vec<u8>>
     Ok(bytes)
 }
 
+/// A file name made from user text: no path separators, no leading dot, never empty.
+pub fn sanitize_file_name(name: &str) -> String {
+    let cleaned = sanitize(name);
+    let visible = cleaned.trim_start_matches('.');
+    if visible.is_empty() {
+        "gridity".to_string()
+    } else {
+        visible.to_string()
+    }
+}
+
 fn sanitize(stem: &str) -> String {
     let cleaned: String = stem
         .chars()
@@ -228,6 +267,20 @@ fn sanitize(stem: &str) -> String {
 
 fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Refuses to write `path` when it is one of `inputs` (canonical paths), so an output never
+/// replaces its own source.
+pub fn check_not_input(path: &Path, inputs: &[PathBuf]) -> Result<(), CliError> {
+    match std::fs::canonicalize(path) {
+        Ok(existing) if inputs.contains(&existing) => Err(CliError::new(
+            ErrorKind::Usage,
+            Reason::InvalidValue,
+            format!("{} is an input and would be overwritten", path.display()),
+        )
+        .with_hint("write to another -o directory or file, or change --name")),
+        _ => Ok(()),
+    }
 }
 
 /// Stable 64-bit FNV-1a hash, used to name output directories.
@@ -348,6 +401,44 @@ pub struct SheetInfo {
     pub cells: Vec<CellInfo>,
 }
 
+/// `export --json`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExportManifest {
+    pub schema_version: u32,
+    pub source: SourceInfo,
+    pub files: Vec<ExportedFile>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExportedFile {
+    pub index: usize,
+    /// The written file; with --dry-run the file that would be written. Absent when the item
+    /// could not be decoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    /// Pixels per PDF point, or written / native pixels for raster sources.
+    pub scale: f64,
+    /// Exported region as [x, y, width, height] fractions of the page or frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<usize>,
+    /// Why the item could not be decoded; no file is written for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CellInfo {
     pub index: usize,
@@ -456,6 +547,7 @@ mod tests {
     fn schemas() -> Vec<(&'static str, schemars::Schema)> {
         vec![
             ("render", schemars::schema_for!(Manifest)),
+            ("export", schemars::schema_for!(ExportManifest)),
             ("probe", schemars::schema_for!(crate::probe::ProbeReport)),
             ("text", schemars::schema_for!(crate::extract::TextReport)),
             ("error", schemars::schema_for!(ErrorReport)),

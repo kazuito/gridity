@@ -63,6 +63,24 @@ take the region's shape, the header shows `crop X,Y,W,H`, and each cell in the m
 has `"crop": [X, Y, W, H]`. PDF regions are rendered at the cell size; raster regions keep
 their pixels and are not upscaled.
 
+`--crop` is always relative to the whole page or frame, never to an earlier crop: to zoom
+further into a cropped cell, pass the new region in the same coordinates.
+
+## Ruler
+
+`--ruler` draws thin lines over every cell with their values along the top and left
+edges, in the coordinates `--crop` takes: fractions of the whole page or frame, also inside
+a cropped cell. A cell of `--crop 0,0.3,0.5,0.7` is marked `.1` to `.4` across and `.4` to
+`.9` down. Read the values around a region and pass them on: a region from `.2` to `.45`
+across and `.6` to `.8` down is `--crop 0.2,0.6,0.25,0.2`.
+
+Each axis gets about ten intervals across its shown range (0.1 for whole pages, 0.02 for a
+0.2-wide crop), so a thin strip still has lines along its short side. `--ruler-step STEP` (a
+multiple of 0.01 up to 0.5, implies `--ruler`) sets both. Steps whose lines would be closer
+than 28 px are coarsened to 0.02, 0.05, 0.1, 0.2 or 0.5. The header shows the step, e.g.
+`ruler 0.1`, or `ruler 0.05 × 0.01` (across × down) when the axes differ. The ruler covers part of the content, so
+leave it off for reading; it does not change the layout or the manifest.
+
 ## Spacing and colors
 
 - `--gap PX` (8), `--padding PX` (12), each 0-1000

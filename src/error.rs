@@ -39,6 +39,7 @@ pub enum Reason {
     LabelVariableNotForInput,
     TooManySheets,
     TooManySamples,
+    TooManyFiles,
     DoesNotFit,
     OutsideMedia,
     UnknownTopic,
@@ -67,7 +68,7 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub const ALL: [Reason; 32] = [
+    pub const ALL: [Reason; 33] = [
         Reason::InvalidArgument,
         Reason::InvalidValue,
         Reason::PageOutOfRange,
@@ -75,6 +76,7 @@ impl Reason {
         Reason::LabelVariableNotForInput,
         Reason::TooManySheets,
         Reason::TooManySamples,
+        Reason::TooManyFiles,
         Reason::DoesNotFit,
         Reason::OutsideMedia,
         Reason::UnknownTopic,
@@ -111,6 +113,7 @@ impl Reason {
             Reason::LabelVariableNotForInput => "label_variable_not_for_input",
             Reason::TooManySheets => "too_many_sheets",
             Reason::TooManySamples => "too_many_samples",
+            Reason::TooManyFiles => "too_many_files",
             Reason::DoesNotFit => "does_not_fit",
             Reason::OutsideMedia => "outside_media",
             Reason::UnknownTopic => "unknown_topic",

@@ -63,11 +63,16 @@ and no files.
 
 ## Versions and schemas
 
-Every JSON document (`render`, `probe`, `text` and errors) starts with `"schema_version": 1`.
-New fields may appear without a version change; removing, renaming or retyping a field
-raises it. JSON Schemas for all four documents are in the repository under
-`docs/schema/` (`render.schema.json`, `probe.schema.json`, `text.schema.json`,
-`error.schema.json`).
+Every JSON document (`render`, `export`, `probe`, `text` and errors) starts with
+`"schema_version": 1`. New fields may appear without a version change; removing, renaming
+or retyping a field raises it. JSON Schemas for all five documents are in the repository
+under `docs/schema/` (`render.schema.json`, `export.schema.json`, `probe.schema.json`,
+`text.schema.json`, `error.schema.json`).
+
+## Export JSON (`gridity export --json`)
+
+`source`, `files` (one per item: `index`, `path`, `page`/`time`/`frame`/`file`, `width`,
+`height`, `scale`, `crop`, `bytes`, `error`) and `warnings`; see `gridity guide export`.
 
 ## Text JSON (`gridity text --json`)
 
@@ -127,13 +132,14 @@ gets:
 | Reason | Kind | Meaning |
 |---|---|---|
 | `invalid_argument` | usage | unknown flag, missing value, conflicting flags, mixed inputs |
-| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file, MCP `max_chars`) |
+| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file, MCP `max_chars`), an `export --name` that gives two items one file name, or an output path that is an input |
 | `page_out_of_range` | usage | `--pages` beyond the last page |
 | `flag_not_for_input` | usage | a flag for another input type (`--pages` on a video) |
-| `label_variable_not_for_input` | usage | a `--label` variable the input type does not have |
+| `label_variable_not_for_input` | usage | a `--label` or `--name` variable the input type does not have |
 | `too_many_sheets` | usage | the selection needs more than `--max-sheets` sheets |
 | `too_many_samples` | usage | an animation selection with too many timestamps |
-| `does_not_fit` | usage | `--per-sheet` / `--cols` / `--rows` cannot fit within the size limits |
+| `too_many_files` | usage | `export` would write more than `--max-files` files |
+| `does_not_fit` | usage | `--per-sheet` / `--cols` / `--rows` cannot fit within the size limits, or an `export` file would exceed 16384 px or 100 megapixels |
 | `outside_media` | usage | `--start`, `--end` or `--at` outside the media |
 | `unknown_topic` | usage | `gridity guide` topic that does not exist |
 | `outside_root` | usage | MCP server: a path outside the directories given with `--root` |

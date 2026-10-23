@@ -12,6 +12,8 @@ gridity render report.pdf --pages 3-8 --json      # manifest with cell coordinat
 gridity render report.pdf --pages 7 --crop 0,0.5,1,0.5   # close-up of the bottom half
 gridity render talk.mp4 --start 1:00 --end 2:30 --every 10s
 gridity render screenshots/ --cols 3
+gridity render report.pdf --pages 7 --ruler       # read --crop values off the sheet
+gridity export report.pdf --pages 7 --crop 0.1,0.55,0.8,0.3 -o fig.png   # one file per item
 gridity guide                                     # documentation for agents
 ```
 

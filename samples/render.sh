@@ -72,6 +72,9 @@ case_ intl-default-font "$intl" --cols 5 --per-sheet 5
 fallback_font="/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 [[ -f $fallback_font ]] && case_ intl-fallback-font "$intl" --cols 5 --per-sheet 5 --font "$fallback_font"
 case_ header-long-title inputs/report.pdf --per-sheet 2 --cols 1 --pages 1-4 --title "Quarterly board review of the annual financial report, final revised version three"
+case_ pdf-ruler inputs/report.pdf --pages 1-4 --ruler
+case_ pdf-ruler-crop inputs/report.pdf --pages 3 --crop 0,0.3,0.5,0.7 --ruler
+case_ pdf-ruler-strip inputs/report.pdf --pages 3 --crop 0.05,0.37,0.9,0.1 --ruler
 case_ video-clip inputs/clip.mp4
 case_ video-range inputs/clip.mp4 --start 0:05 --end 0:15 --every 1s
 case_ video-label-below inputs/clip.mp4 --count 6 --label "{index}/{total} {time}" --label-pos below
