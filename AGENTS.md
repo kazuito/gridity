@@ -70,7 +70,7 @@ docs/schema/     JSON Schemas generated from the output structs (see "JSON is ve
 packaging/npm/   npm package: TypeScript launcher (src/gridity.ts) and build.ts, which bundles
                  it with tsdown and adds the prebuilt binaries (Node 24 runs build.ts as is)
 .github/         CI (ci.yml) and tag-triggered releases to crates.io, npm and GitHub
-                 Releases for cargo-binstall (release.yml; steps in RELEASING.md)
+                 Releases for cargo-binstall (release.yml, which runs ci.yml first)
 samples/         committed inputs for visual review; render.sh writes samples/out/ (gitignored)
 assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 ```

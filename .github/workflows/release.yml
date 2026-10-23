@@ -1,7 +1,8 @@
 name: Release
 
-# Publishes a `v*` tag to crates.io, npm and GitHub Releases. The registries use trusted
-# publishing (OIDC), set up once per registry; see RELEASING.md.
+# Publishes a `v*` tag to crates.io, npm and GitHub Releases once every CI check passes on
+# it. The registries use trusted publishing (OIDC): repository kazuito/gridity, workflow
+# release.yml, environment release.
 
 on:
   push:
@@ -14,8 +15,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tag matches the Cargo.toml version
@@ -31,7 +36,7 @@ jobs:
       - run: cargo publish --dry-run --locked
 
   build:
-    needs: check
+    needs: [ci, check]
     strategy:
       fail-fast: true
       matrix:
@@ -42,6 +47,7 @@ jobs:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, run: true }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, run: true }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -72,6 +78,7 @@ jobs:
   crates:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release
     permissions:
       contents: read
@@ -90,6 +97,7 @@ jobs:
   npm:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release
     permissions:
       contents: read
@@ -115,6 +123,7 @@ jobs:
   github:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release
     permissions:
       contents: write
