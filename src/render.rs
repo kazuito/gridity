@@ -4,14 +4,13 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::cli::{
-    Detail, Format, InputKind, LabelPos, Preset, RenderArgs, SelectionArgs, SourceArgs,
-};
+use crate::cli::{Format, InputKind, Preset, RenderArgs, SelectionArgs, SourceArgs};
 use crate::compose::{Cell, Header, Ruler, Style, compose, header_height, place};
 use crate::detect::detect;
 use crate::error::{CliError, Reason, input, usage};
 use crate::layout::{
-    Chrome, Limits, PlanOptions, SheetPlan, capacity, check_sheets, plan, token_cost,
+    Chrome, Limits, MAX_CAPACITY, PlanOptions, SheetPlan, capacity, check_sheets, median_aspect,
+    plan, token_cost,
 };
 use crate::output::{
     CellInfo, FileInfo, LimitsInfo, MANY_IMAGES_MAX_EDGE, MAX_BASE64_BYTES, Manifest,
@@ -24,67 +23,11 @@ use crate::select::{
     sample_times,
 };
 use crate::source::{Item, ItemKey, Source, Warnings, file_name, fit_size};
+use crate::template::{expand_template, validate_template};
 use crate::text::Fonts;
 
-/// Upper bound when estimating how many frames fit on one sheet.
-const MAX_CAPACITY: usize = 200;
 /// Animation timestamps collapse into frames, so they are limited by count rather than by sheets.
 const MAX_ANIM_SAMPLES: usize = 1_000_000;
-
-pub fn default_label_pos(kind: InputKind) -> LabelPos {
-    match kind {
-        InputKind::Pdf | InputKind::Images => LabelPos::Below,
-        InputKind::Video | InputKind::Anim => LabelPos::Overlay,
-    }
-}
-
-pub fn default_format(kind: InputKind) -> Format {
-    match kind {
-        InputKind::Pdf | InputKind::Images => Format::Png,
-        InputKind::Video | InputKind::Anim => Format::Jpeg,
-    }
-}
-
-/// Smallest long edge of a cell, in pixels. Text pages need the most room to stay legible.
-pub fn min_cell(kind: InputKind, detail: Detail) -> u32 {
-    match (kind, detail) {
-        (InputKind::Pdf, Detail::Low) => 380,
-        (InputKind::Pdf, Detail::Medium) => 580,
-        (InputKind::Pdf, Detail::High) => 800,
-        (InputKind::Video | InputKind::Anim, Detail::Low) => 330,
-        (InputKind::Video | InputKind::Anim, Detail::Medium) => 400,
-        (InputKind::Video | InputKind::Anim, Detail::High) => 560,
-        (InputKind::Images, Detail::Low) => 330,
-        (InputKind::Images, Detail::Medium) => 470,
-        (InputKind::Images, Detail::High) => 630,
-    }
-}
-
-pub fn default_label(kind: InputKind) -> &'static str {
-    match kind {
-        InputKind::Pdf => "p.{page}",
-        InputKind::Video | InputKind::Anim => "{time}",
-        InputKind::Images => "{name}",
-    }
-}
-
-fn label_vars(kind: InputKind) -> &'static [&'static str] {
-    match kind {
-        InputKind::Pdf => &["index", "total", "page"],
-        InputKind::Video => &["index", "total", "time"],
-        InputKind::Anim => &["index", "total", "time", "frame"],
-        InputKind::Images => &["index", "total", "name"],
-    }
-}
-
-pub fn kind_name(kind: InputKind) -> &'static str {
-    match kind {
-        InputKind::Pdf => "pdf",
-        InputKind::Video => "video",
-        InputKind::Anim => "anim",
-        InputKind::Images => "images",
-    }
-}
 
 pub fn preset_name(preset: Preset) -> &'static str {
     match preset {
@@ -146,15 +89,15 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     let template = match (&args.style.label, args.style.no_label) {
         (_, true) => None,
         (Some(t), _) => Some(t.clone()),
-        (None, _) => Some(default_label(kind).to_string()),
+        (None, _) => Some(kind.default_label().to_string()),
     };
     if let Some(t) = &template {
-        validate_template(t, "label", label_vars(kind), kind)?;
+        validate_template(t, "label", kind.label_vars(), kind)?;
     }
 
     let mut layout = build_layout(&args, kind)?;
     let source = Source::open(kind, &args.inputs, &args.source)?;
-    log(format!("opened {} input", kind_name(kind)));
+    log(format!("opened {} input", kind.name()));
     let crop = args.selection.crop.as_deref().map(parse_crop).transpose()?;
     layout.options.max_cell = native_bounds(&source).map(|size| match crop {
         Some(crop) => {
@@ -166,7 +109,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
 
     let frames = frame_limits(&source, crop, &layout);
     let items = select_items(&source, &args.selection, crop, &frames)?;
-    let aspect = median_aspect(&items);
+    let aspect = median_aspect(items.iter().map(|item| item.aspect));
     let sheets = plan(
         items.len(),
         aspect,
@@ -183,7 +126,7 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
     let requested_format = args
         .format
         .or_else(|| args.output.as_deref().and_then(format_from_extension));
-    let format = requested_format.unwrap_or_else(|| default_format(kind));
+    let format = requested_format.unwrap_or_else(|| kind.default_format());
     let target = Target::resolve(
         args.output.as_deref(),
         &output_stem(&source, &args.inputs),
@@ -374,7 +317,7 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
     let label_pos = (!args.style.no_label).then(|| {
         args.style
             .label_pos
-            .unwrap_or_else(|| default_label_pos(kind))
+            .unwrap_or_else(|| kind.default_label_pos())
     });
     let style = Style::new(
         args.style.bg,
@@ -402,7 +345,7 @@ pub fn build_layout(args: &RenderArgs, kind: InputKind) -> Result<Layout> {
         per_sheet: args.layout.per_sheet,
         cols: args.layout.cols,
         rows: args.layout.rows,
-        min_cell: min_cell(kind, args.layout.detail),
+        min_cell: kind.min_cell(args.layout.detail),
         max_cell: None,
         max_sheets: args.layout.max_sheets,
     };
@@ -465,67 +408,23 @@ pub fn check_flags(
         format!(
             "{} cannot be used with {} input",
             offending.join(", "),
-            kind_name(kind)
+            kind.name()
         ),
     )
-    .with_hint(format!("see: gridity guide {}", guide_topic(kind))))
-}
-
-pub fn guide_topic(kind: InputKind) -> &'static str {
-    match kind {
-        InputKind::Pdf => "pdf",
-        InputKind::Video | InputKind::Anim => "video",
-        InputKind::Images => "images",
-    }
-}
-
-/// Checks that `template` (of `--label` or `--name`, named by `flag`) only uses `allowed`
-/// variables.
-pub fn validate_template(
-    template: &str,
-    flag: &str,
-    allowed: &[&str],
-    kind: InputKind,
-) -> Result<(), CliError> {
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('}') else {
-            break;
-        };
-        let name = &after[..close];
-        if !allowed.contains(&name) {
-            return Err(usage(
-                Reason::LabelVariableNotForInput,
-                format!(
-                    "{flag} variable {{{name}}} is not available for {} input",
-                    kind_name(kind)
-                ),
-            )
-            .with_hint(format!(
-                "available: {}",
-                allowed
-                    .iter()
-                    .map(|v| format!("{{{v}}}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )));
-        }
-        rest = &after[close + 1..];
-    }
-    Ok(())
+    .with_hint(format!("see: gridity guide {}", kind.guide_topic())))
 }
 
 fn expand_label(template: &str, item: &Item) -> String {
     let v = &item.vars;
-    let opt = |value: Option<String>| value.unwrap_or_default();
-    template
-        .replace("{index}", &v.index.to_string())
-        .replace("{total}", &v.total.to_string())
-        .replace("{page}", &opt(v.page.map(|p| p.to_string())))
-        .replace("{time}", &opt(v.time.clone()))
-        .replace("{frame}", &opt(v.frame.map(|f| f.to_string())))
-        .replace("{name}", &opt(v.name.clone()))
+    expand_template(template, |name| match name {
+        "index" => Some(v.index.to_string()),
+        "total" => Some(v.total.to_string()),
+        "page" => Some(v.page.map(|p| p.to_string()).unwrap_or_default()),
+        "time" => Some(v.time.clone().unwrap_or_default()),
+        "frame" => Some(v.frame.map(|f| f.to_string()).unwrap_or_default()),
+        "name" => Some(v.name.clone().unwrap_or_default()),
+        _ => None,
+    })
 }
 
 /// How a command bounds the frames of a video or animation selection.
@@ -766,12 +665,6 @@ pub fn native_bounds(source: &Source) -> Option<(u32, u32)> {
             .map(|f| f.size)
             .reduce(|a, b| (a.0.max(b.0), a.1.max(b.1))),
     }
-}
-
-fn median_aspect(items: &[Item]) -> f64 {
-    let mut aspects: Vec<f64> = items.iter().map(|i| i.aspect).collect();
-    aspects.sort_by(f64::total_cmp);
-    aspects.get(aspects.len() / 2).copied().unwrap_or(1.0)
 }
 
 fn predicted_rects(sheet: &SheetPlan, items: &[Item], layout: &Layout) -> Vec<[u32; 4]> {
@@ -1113,18 +1006,6 @@ fn print_dry_run(manifest: &Manifest, item_count: usize) {
 mod tests {
     use super::*;
     use crate::source::LabelVars;
-
-    #[test]
-    fn templates_only_accept_variables_of_the_input_kind() {
-        let check = |template: &str, kind: InputKind| {
-            validate_template(template, "label", label_vars(kind), kind)
-        };
-        assert!(check("p.{page} ({index}/{total})", InputKind::Pdf).is_ok());
-        assert!(check("{time}", InputKind::Pdf).is_err());
-        assert!(check("{frame}", InputKind::Video).is_err());
-        assert!(check("{frame} {time}", InputKind::Anim).is_ok());
-        assert!(check("no variables", InputKind::Images).is_ok());
-    }
 
     #[test]
     fn labels_expand() {

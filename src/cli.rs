@@ -78,6 +78,27 @@ pub enum Command {
     Version,
 }
 
+impl Command {
+    /// Whether errors are also printed as JSON on stdout.
+    pub fn json(&self) -> bool {
+        match self {
+            Command::Render(args) => args.json,
+            Command::Export(args) => args.json,
+            Command::Probe(args) => args.json,
+            Command::Guide(_) | Command::Mcp(_) | Command::Version => false,
+        }
+    }
+
+    pub fn jobs(&self) -> Option<usize> {
+        match self {
+            Command::Render(args) => args.jobs,
+            Command::Export(args) => args.jobs,
+            Command::Mcp(args) => args.jobs,
+            Command::Probe(_) | Command::Guide(_) | Command::Version => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InputKind {

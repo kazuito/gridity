@@ -6,14 +6,12 @@ use serde::Serialize;
 use crate::cli::{Cli, Command, Detail, InputKind, Preset, ProbeArgs, RenderArgs};
 use crate::detect::detect;
 use crate::error::{Reason, usage};
-use crate::layout::{capacity, plan};
+use crate::layout::{MAX_CAPACITY, capacity, median_aspect, plan};
 use crate::output::{SCHEMA_VERSION, SourceInfo};
 use crate::pagetext::{
     Content, PageSummary, READABLE_PX, SKIMMABLE_PX, document_body_pt, summarize,
 };
-use crate::render::{
-    Layout, build_layout, compact_ranges, kind_name, native_bounds, preset_name, round3,
-};
+use crate::render::{Layout, build_layout, compact_ranges, native_bounds, preset_name, round3};
 use crate::select::{Sampling, format_time, sample_count, spread_pages};
 use crate::source::pdf::PdfSource;
 use crate::source::{Source, fit_size};
@@ -160,7 +158,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
     let kind = detect(&args.inputs, args.kind)?;
     let source = Source::open(kind, &args.inputs, &args.source)?;
     let (count, shapes) = item_shapes(&source);
-    let aspect = median_aspect(&shapes);
+    let aspect = median_aspect(shapes.iter().map(|s| s.aspect));
     let pages = page_summaries(&source, args.per_page)?;
     let body_pt = pages
         .as_ref()
@@ -184,7 +182,13 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
         let mut layout = build_layout(&default_render_args(args.preset, name), kind)?;
         layout.options.max_cell = native_bounds(&source);
         layout.options.max_sheets = usize::MAX;
-        let per_sheet = capacity(aspect, layout.limits, layout.chrome, &layout.options, 200);
+        let per_sheet = capacity(
+            aspect,
+            layout.limits,
+            layout.chrome,
+            &layout.options,
+            MAX_CAPACITY,
+        );
         let scale = sheet_scale(&layout, count.unwrap_or(per_sheet), &shapes)?;
         let visual_scale = match &visual_shapes {
             Some(shapes) => Some(round3(sheet_scale(&layout, shapes.len(), shapes)?)),
@@ -231,7 +235,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
 fn sheet_scale(layout: &Layout, count: usize, shapes: &[Shape]) -> Result<f64> {
     let sheets = plan(
         count,
-        median_aspect(shapes),
+        median_aspect(shapes.iter().map(|s| s.aspect)),
         layout.limits,
         layout.chrome,
         &layout.options,
@@ -276,7 +280,7 @@ fn page_summaries(source: &Source, per_page: bool) -> Result<Option<Vec<(usize, 
                 Reason::FlagNotForInput,
                 format!(
                     "--per-page works with PDF input only, not {}",
-                    kind_name(source.kind())
+                    source.kind().name()
                 ),
             )
             .with_hint("see: gridity guide pdf")
@@ -355,12 +359,6 @@ fn page_shape((w, h): (f32, f32)) -> Shape {
         width: w as f64,
         native: None,
     }
-}
-
-fn median_aspect(shapes: &[Shape]) -> f64 {
-    let mut aspects: Vec<f64> = shapes.iter().map(|s| s.aspect).collect();
-    aspects.sort_by(f64::total_cmp);
-    aspects[aspects.len() / 2]
 }
 
 /// A suggested command, written out both as a command line and as an MCP tool call.
@@ -461,7 +459,7 @@ impl Suggestion {
         flag("detail", a.detail.map(|d| detail_name(d).to_string()));
         flag("per-sheet", a.per_sheet.map(|n| n.to_string()));
         flag("max-sheets", a.max_sheets.map(|n| n.to_string()));
-        flag("type", a.kind.map(|k| kind_name(k).to_string()));
+        flag("type", a.kind.map(|k| k.name().to_string()));
         flag("preset", a.preset.map(|p| preset_name(p).to_string()));
         flag("password-file", a.password_file.as_deref().map(quote));
         if a.per_page == Some(true) {
@@ -635,7 +633,7 @@ fn planned_sheets(layout: &Layout, pdf: &PdfSource, pages: &[usize]) -> Result<u
         .collect();
     let sheets = plan(
         shapes.len(),
-        median_aspect(&shapes),
+        median_aspect(shapes.iter().map(|s| s.aspect)),
         layout.limits,
         layout.chrome,
         &layout.options,

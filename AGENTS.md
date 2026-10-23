@@ -34,7 +34,11 @@ src/
   main.rs        entry point; maps errors to exit codes; JSON errors with --json
   cli.rs         clap derive definitions (all flags, defaults, help text)
   error.rs       CliError { kind, reason, message, hint }; ErrorKind -> exit code;
-                 Reason -> stable `reason` string in JSON errors
+                 Reason -> stable `reason` string in JSON errors; describe() and
+                 from_panic() turn any error or panic into a CliError
+  kind.rs        per-input-kind defaults on `impl InputKind`: name, format, label, label
+                 position, template variables, min_cell, guide topic
+  template.rs    `--label` / `--name` templates: validate_template(), expand_template() in one pass
   detect.rs      input type detection (magic bytes, extensions, APNG acTL check)
   select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
@@ -45,7 +49,7 @@ src/
   output.rs      output paths (tmp dir + hash), encoding, JSON structs (serde + schemars),
                  SCHEMA_VERSION
   render.rs      `render` command: wires everything together; shared helpers for `probe`
-                 and `export` (selection, flag checks, templates)
+                 and `export` (selection, flag checks, source info)
   export.rs      `export` command: one file per selected item, no sheet layout; file names
                  from `--name`, PDF size from `--dpi`
   ruler.rs       pure ruler math: steps in hundredths, ticks in page/frame fractions
@@ -122,8 +126,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 - **Computing is separate from printing.** `render::execute`, `export::execute`,
   and `probe::report` return values and never write to stdout; their `run` functions print.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
-  Label and `--name` templates may only use the variables of the input kind (`label_vars`,
-  `export::name_vars`).
+  Label and `--name` templates may only use the variables of the input kind (`InputKind::label_vars`,
+  `InputKind::name_vars` in `kind.rs`).
 - **Rulers and crops share page coordinates.** `--crop` is always relative to the whole
   page or frame, and ruler values are too, also inside a cropped cell. Rulers are drawn
   over placed images only; they never change the layout or the manifest.
@@ -174,8 +178,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 **Adding an input kind**
 Add an `InputKind` variant, detection in `detect.rs`, a module in `source/` with
 `open` / `items` / `render`, a `Source` variant, and a case in every `match` in
-`render.rs` and `probe.rs` (the compiler lists them). Also add defaults: label, label
-position, format, `min_cell`, label variables, and a guide topic.
+`render.rs`, `probe.rs` and `kind.rs` (the compiler lists them); `kind.rs` holds the
+defaults: label, label position, format, `min_cell`, template variables, and a guide topic.
 
 **Tuning page analysis**
 Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
@@ -193,7 +197,7 @@ that is left to dedicated tools (docling, MarkItDown).
    sensible counts, and update `docs/guide/layout.md` and `preset_name`.
 
 **Tuning `--detail`**
-`render::min_cell` holds the minimum cell long edge per kind and detail. It is calibrated
+`InputKind::min_cell` (`kind.rs`) holds the minimum cell long edge per kind and detail. It is calibrated
 so the compat preset gives PDF 9/4/2, video 16/12/6 and images 12/6/3 items per sheet
 (A4 and Letter). Check with `gridity probe <file>` and
 `gridity render <file> --per-sheet N --dry-run`, and keep `docs/guide/layout.md` in sync.

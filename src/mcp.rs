@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::cli::{Cli, Command, Detail, Format, InputKind, McpArgs, Preset};
-use crate::error::{CliError, ErrorKind, Reason, usage};
+use crate::error::{CliError, Reason, describe, usage};
 use crate::layout::MAX_SHEETS;
 use crate::output::{Manifest, base64_len, format_from_extension};
 use crate::probe::ProbeReport;
@@ -238,15 +238,8 @@ impl Server {
             "probe" => self.probe(parse_params(arguments)?),
             _ => guide(parse_params(arguments)?),
         }))
-        .unwrap_or_else(|panic| {
-            Err(CliError::new(
-                ErrorKind::Runtime,
-                Reason::Internal,
-                format!("internal error: {}", crate::panic_message(&*panic)),
-            )
-            .into())
-        });
-        Ok(outcome.unwrap_or_else(|err| tool_error(&crate::describe(&err))))
+        .unwrap_or_else(|panic| Err(crate::error::from_panic(&*panic).into()));
+        Ok(outcome.unwrap_or_else(|err| tool_error(&describe(&err))))
     }
 
     fn render(&self, p: RenderParams) -> Result<Value> {
@@ -940,7 +933,7 @@ mod tests {
         let unknown = guide(GuideParams {
             topic: Some("nope".to_string()),
         });
-        let error = crate::describe(&unknown.unwrap_err());
+        let error = describe(&unknown.unwrap_err());
         assert_eq!(error.reason, Reason::UnknownTopic);
     }
 
