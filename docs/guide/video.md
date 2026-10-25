@@ -49,12 +49,18 @@ Variables: `{time}`, `{index}`, `{total}`, and `{frame}` for animations.
 Frames are laid out at their display size: non-square pixels (SAR) and rotation metadata
 (phone videos) are applied, and frames are never upscaled beyond their native resolution.
 `--crop X,Y,W,H` keeps a region of every frame, in fractions of the displayed frame (see
-`gridity guide layout`).
+`gridity guide layout`). The region keeps its native pixels (a quarter of a 852x480 frame
+is 426x240 px). A cell `scale` of 1.0 means every source pixel is shown, and a crop or a
+larger detail that reaches it prints a warning; then small text is limited by the video,
+not by the options (`gridity guide recipes`).
 
 ## Output
 
 JPEG by default (`--format png` to change). Undecodable timestamps become gray cells and a
 warning, never a silent gap; the manifest cell carries `error`. A damaged GIF or APNG is
 read up to the first broken frame, and a warning tells how many frames were used.
+
+To keep frames as files, use `gridity export talk.mp4 --at 1:15,7:30 -o frames/ --name
+"{time}"` (`gridity guide export`).
 
 `--pages`, `--password` and `--password-file` are rejected for video and animation input.
