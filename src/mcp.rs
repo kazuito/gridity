@@ -57,7 +57,8 @@ struct RenderParams {
     count: Option<usize>,
     /// Frames at explicit times: "0:10,1:30".
     at: Option<String>,
-    /// Region of every page/frame/image as X,Y,W,H fractions, e.g. "0,0.5,1,0.5".
+    /// Region of every page/frame/image as X,Y,W,H fractions, e.g. "0,0.5,1,0.5". Video,
+    /// GIF and image regions keep their native pixels and are never enlarged.
     crop: Option<String>,
     /// Sheet size limits (default compat).
     preset: Option<Preset>,

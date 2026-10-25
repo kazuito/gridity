@@ -53,7 +53,7 @@ and no files.
   or `file` (images). `index` is 1-based across the whole render.
 - `rect` is `[x, y, width, height]` of the placed image in sheet pixels.
 - `scale` is sheet pixels per point for PDF pages, and displayed / native pixels for
-  images and frames.
+  images and frames (at most `1.0`: they are never enlarged).
 - `crop` (only with `--crop`) is the shown region as `[x, y, width, height]` fractions.
 - `error` (only when an item could not be decoded) explains why the cell is a gray
   placeholder; the cell keeps its planned `rect`.

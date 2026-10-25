@@ -61,7 +61,9 @@ fractions of its displayed size (after page rotation, EXIF orientation and video
 rotation): `0,0,1,0.5` is the top half, `0.5,0.5,0.5,0.5` the bottom-right quarter. Cells
 take the region's shape, the header shows `crop X,Y,W,H`, and each cell in the manifest
 has `"crop": [X, Y, W, H]`. PDF regions are rendered at the cell size; raster regions keep
-their pixels and are not upscaled.
+their pixels and are not upscaled. When `--crop`, `--detail high`, `--preset hires` or
+`--per-sheet` leave a raster cell at native size, a warning says so: further zoom cannot
+enlarge it.
 
 `--crop` is always relative to the whole page or frame, never to an earlier crop: to zoom
 further into a cropped cell, pass the new region in the same coordinates.

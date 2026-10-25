@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::cli::{Format, InputKind, Preset, RenderArgs, SelectionArgs, SourceArgs};
+use crate::cli::{Detail, Format, InputKind, Preset, RenderArgs, SelectionArgs, SourceArgs};
 use crate::compose::{Cell, Header, Ruler, Style, compose, header_height, place};
 use crate::detect::detect;
 use crate::error::{CliError, Reason, input, usage};
@@ -142,6 +142,11 @@ pub fn execute(args: RenderArgs) -> Result<RenderOutcome> {
 
     let warnings = Warnings::default();
     for warning in source.open_warnings() {
+        warnings.push(warning);
+    }
+    if asks_for_larger_cells(&args, crop.is_some())
+        && let Some(warning) = native_size_warning(&sheets, &items, crop.is_some())
+    {
         warnings.push(warning);
     }
     let mut missing_chars = BTreeSet::new();
@@ -667,6 +672,54 @@ pub fn native_bounds(source: &Source) -> Option<(u32, u32)> {
     }
 }
 
+/// Options an agent reaches for to see a source larger. `--cols`/`--rows` are left out: they
+/// usually arrange images for comparison.
+fn asks_for_larger_cells(args: &RenderArgs, cropped: bool) -> bool {
+    let layout = &args.layout;
+    cropped
+        || layout.detail == Detail::High
+        || layout.preset == Preset::Hires
+        || layout.per_sheet.is_some()
+}
+
+/// Names the cells that already show every native pixel of their raster source, where a
+/// tighter crop or larger cells cannot make small text more readable.
+fn native_size_warning(sheets: &[SheetPlan], items: &[Item], cropped: bool) -> Option<String> {
+    let at_native: Vec<(u32, u32)> = sheets
+        .iter()
+        .flat_map(|sheet| {
+            let cell = (sheet.grid.cell_width, sheet.grid.cell_height);
+            items[sheet.start..sheet.start + sheet.len]
+                .iter()
+                .filter_map(move |item| {
+                    let native = item.native?;
+                    let (w, h) = fit_size(item.aspect, cell, Some(native));
+                    // Cells are rounded when shrunk to the native size, so allow one pixel.
+                    (w + 1 >= native.0 || h + 1 >= native.1).then_some(native)
+                })
+        })
+        .collect();
+    let &(width, height) = at_native
+        .iter()
+        .max_by_key(|&&(w, h)| w as u64 * h as u64)?;
+    let cells = match (at_native.len(), items.len()) {
+        (_, 1) => "the cell is".to_string(),
+        (n, total) if n == total => "every cell is".to_string(),
+        (n, total) => format!("{n} of {total} cells are"),
+    };
+    let up_to = if at_native.iter().all(|&size| size == (width, height)) {
+        ""
+    } else {
+        "up to "
+    };
+    let region = if cropped { " of the crop region" } else { "" };
+    Some(format!(
+        "{cells} shown at native resolution ({up_to}{width}x{height} px{region}): the source \
+         resolution is the limit, and a narrower --crop, a higher --detail, --preset hires or \
+         gridity export cannot enlarge it"
+    ))
+}
+
 fn predicted_rects(sheet: &SheetPlan, items: &[Item], layout: &Layout) -> Vec<[u32; 4]> {
     let grid = sheet.grid;
     items
@@ -1028,5 +1081,58 @@ mod tests {
     fn ranges_compact() {
         assert_eq!(compact_ranges(&[1, 2, 3, 5, 7, 8]), "1-3,5,7-8");
         assert_eq!(compact_ranges(&[4]), "4");
+    }
+
+    fn raster(native: Option<(u32, u32)>) -> Item {
+        Item {
+            aspect: 4.0 / 3.0,
+            native,
+            key: ItemKey::Time(0.0),
+            vars: LabelVars::default(),
+            crop: None,
+        }
+    }
+
+    fn one_sheet(len: usize, cell: (u32, u32)) -> Vec<SheetPlan> {
+        vec![SheetPlan {
+            start: 0,
+            len,
+            grid: crate::layout::Grid {
+                cols: len as u32,
+                rows: 1,
+                cell_width: cell.0,
+                cell_height: cell.1,
+            },
+        }]
+    }
+
+    #[test]
+    fn native_size_warning_names_cells_at_full_resolution() {
+        let items = [raster(Some((400, 300))), raster(Some((1600, 1200)))];
+        let warning = native_size_warning(&one_sheet(2, (800, 600)), &items, true).unwrap();
+        assert!(
+            warning.starts_with(
+                "1 of 2 cells are shown at native resolution (400x300 px of the crop region)"
+            ),
+            "{warning}"
+        );
+
+        let rounded = [raster(Some((400, 300)))];
+        let warning = native_size_warning(&one_sheet(1, (399, 299)), &rounded, false).unwrap();
+        assert!(warning.starts_with("the cell is shown at native resolution (400x300 px)"));
+    }
+
+    #[test]
+    fn no_native_size_warning_for_scaled_or_vector_items() {
+        let scaled = [raster(Some((1600, 1200)))];
+        assert_eq!(
+            native_size_warning(&one_sheet(1, (800, 600)), &scaled, true),
+            None
+        );
+        let pdf = [raster(None)];
+        assert_eq!(
+            native_size_warning(&one_sheet(1, (800, 600)), &pdf, true),
+            None
+        );
     }
 }

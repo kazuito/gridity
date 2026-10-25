@@ -690,6 +690,21 @@ pub fn quote(s: &str) -> String {
     }
 }
 
+/// Largest native size among raster inputs, like `render::native_bounds`.
+fn native_size(source: &SourceInfo) -> Option<(u32, u32)> {
+    match source {
+        SourceInfo::Pdf { .. } => None,
+        SourceInfo::Video { width, height, .. } | SourceInfo::Anim { width, height, .. } => {
+            Some((*width, *height))
+        }
+        SourceInfo::Images { files, .. } => files
+            .as_deref()?
+            .iter()
+            .map(|f| (f.width, f.height))
+            .reduce(|a, b| (a.0.max(b.0), a.1.max(b.1))),
+    }
+}
+
 fn print_text(report: &ProbeReport) {
     let source = &report.source;
     let (kind, unit) = match source {
@@ -787,6 +802,11 @@ fn print_text(report: &ProbeReport) {
         println!(
             "  --detail {:<6} {} {unit}/sheet{sheets}, {scale}{marker}",
             estimate.detail, estimate.per_sheet
+        );
+    }
+    if let Some((width, height)) = native_size(source) {
+        println!(
+            "  never enlarged: a cell shows at most {width}x{height} px, a --crop region only its own pixels"
         );
     }
     if let Some(pages) = &report.pages {

@@ -66,7 +66,7 @@ pub enum Command {
     #[command(
         after_help = EXPORT_EXAMPLES,
         mut_arg("count", |a| a.help("Take N evenly spaced frames (video and animations need --count, --every or --at)")),
-        mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half [default: whole]")),
+        mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half; video, GIF and image regions keep their native pixels [default: whole]")),
     )]
     Export(Box<ExportArgs>),
     /// Print usage documentation for agents (Markdown)
@@ -257,7 +257,8 @@ pub struct SelectionArgs {
     pub at: Option<String>,
 
     /// Show only part of every page, frame or image: X,Y,W,H as fractions of its displayed
-    /// size, e.g. "0,0.5,1,0.5" for the bottom half [default: whole]
+    /// size, e.g. "0,0.5,1,0.5" for the bottom half; video, GIF and image regions keep their
+    /// native pixels and are never enlarged [default: whole]
     #[arg(long, value_name = "X,Y,W,H", help_heading = "Selection")]
     pub crop: Option<String>,
 }

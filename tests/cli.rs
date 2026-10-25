@@ -615,6 +615,40 @@ fn crop_keeps_raster_inputs_at_native_size() {
 }
 
 #[test]
+fn zooming_past_native_resolution_warns() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 120, 90, 0);
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0)]);
+
+    let manifest = run_json(&["render", s(&png), "--crop", "0,0,0.5,1", "--dry-run"]);
+    let warning = manifest["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.contains("native resolution (60x90 px of the crop region)"),
+        "{warning}"
+    );
+    let manifest = run_json(&["render", s(&png), "--detail", "high", "--dry-run"]);
+    assert!(
+        manifest["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("(120x90 px)")
+    );
+
+    for args in [
+        &["render", s(&png), "--dry-run"][..],
+        &["render", s(&pdf), "--crop", "0,0,0.5,0.5", "--dry-run"],
+    ] {
+        assert_eq!(
+            run_json(args)["warnings"],
+            serde_json::json!([]),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn invalid_crop_is_a_usage_error() {
     let dir = TempDir::new().unwrap();
     let png = dir.path().join("a.png");
