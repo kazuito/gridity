@@ -1,3 +1,5 @@
+<img src="assets/icon/gridity.svg" width="64" height="128" alt="gridity icon">
+
 # gridity
 
 Arrange PDF pages, video frames, GIF/APNG frames and images into labeled grid sheets,
