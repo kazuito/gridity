@@ -76,15 +76,15 @@ impl InputKind {
     /// Smallest long edge of a cell, in pixels. Text pages need the most room to stay legible.
     pub fn min_cell(self, detail: Detail) -> u32 {
         match (self, detail) {
-            (InputKind::Pdf, Detail::Low) => 380,
+            (InputKind::Pdf, Detail::Low) => 390,
             (InputKind::Pdf, Detail::Medium) => 580,
             (InputKind::Pdf, Detail::High) => 800,
-            (InputKind::Video | InputKind::Anim, Detail::Low) => 330,
+            (InputKind::Video | InputKind::Anim, Detail::Low) => 340,
             (InputKind::Video | InputKind::Anim, Detail::Medium) => 400,
             (InputKind::Video | InputKind::Anim, Detail::High) => 560,
             (InputKind::Images, Detail::Low) => 330,
             (InputKind::Images, Detail::Medium) => 470,
-            (InputKind::Images, Detail::High) => 630,
+            (InputKind::Images, Detail::High) => 640,
         }
     }
 }

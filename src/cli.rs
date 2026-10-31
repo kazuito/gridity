@@ -298,11 +298,11 @@ pub struct LayoutArgs {
     pub max_sheets: usize,
 
     /// Space between cells in pixels (0-1000)
-    #[arg(long, value_name = "PX", default_value_t = 8, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
+    #[arg(long, value_name = "PX", default_value_t = 4, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub gap: u32,
 
     /// Space around the grid in pixels (0-1000)
-    #[arg(long, value_name = "PX", default_value_t = 12, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
+    #[arg(long, value_name = "PX", default_value_t = 6, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub padding: u32,
 }
 

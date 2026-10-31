@@ -85,7 +85,8 @@ leave it off for reading; it does not change the layout or the manifest.
 
 ## Spacing and colors
 
-- `--gap PX` (8), `--padding PX` (12), each 0-1000
+- `--gap PX` (4), `--padding PX` (6), each 0-1000. The defaults are small so that less of the
+  token budget goes to empty space; each cell has a 1 px frame just outside it, so keep `--gap` at 2 or more
 - `--bg COLOR` (`#ffffff`); colors accept `#rgb`, `#rrggbb`, `#rrggbbaa`, `white`,
   `black`, `gray`, `red`, `transparent`
 

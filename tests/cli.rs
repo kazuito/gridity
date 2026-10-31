@@ -1743,10 +1743,10 @@ fn make_suggested_calls(probes: &[Value]) -> Vec<(u64, String)> {
 fn mcp_suggested_pdf_calls_succeed_as_they_are() {
     let dir = TempDir::new().unwrap();
     let report = dir.path().join("report.pdf");
-    write_pdf_pages(&report, &vec![(595, 842, 0, text_page(10)); 12]);
+    write_pdf_pages(&report, &vec![(595, 842, 0, text_page_sized(10, 10)); 12]);
     let figures = dir.path().join("figures.pdf");
-    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page(10));
-    let mut pages = vec![(595, 842, 0, text_page(10))];
+    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page_sized(10, 10));
+    let mut pages = vec![(595, 842, 0, text_page_sized(10, 10))];
     pages.extend(std::iter::repeat_n((595, 842, 0, figure), 11));
     write_pdf_pages(&figures, &pages);
     let beyond_mcp_default = make_suggested_calls(&[

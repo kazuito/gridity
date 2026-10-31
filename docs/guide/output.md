@@ -36,10 +36,10 @@ and no files.
   "sheets": [
     {
       "path": "/abs/tmp/gridity-501/deck-1a2b3c4d5e6f7a8b/deck.grid-01.png",
-      "width": 896, "height": 1319, "est_tokens": 1536, "bytes": 68967,
-      "grid": { "cols": 2, "rows": 2, "cell_width": 432, "cell_height": 611 },
+      "width": 896, "height": 1325, "est_tokens": 1536, "bytes": 68967,
+      "grid": { "cols": 2, "rows": 2, "cell_width": 440, "cell_height": 622 },
       "cells": [
-        { "index": 1, "label": "p.1", "page": 1, "rect": [12, 35, 432, 611], "scale": 0.726 }
+        { "index": 1, "label": "p.1", "page": 1, "rect": [6, 29, 440, 622], "scale": 0.739 }
       ]
     }
   ],
