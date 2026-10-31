@@ -10,6 +10,8 @@ const PATCH: u32 = 28;
 pub const DEFAULT_MAX_SHEETS: usize = 10;
 /// Largest value `--max-sheets` accepts.
 pub const MAX_SHEETS: usize = 1000;
+/// Upper bound when estimating how many items fit on one sheet.
+pub const MAX_CAPACITY: usize = 200;
 
 /// How a model decides whether to downscale an image and how it counts the image's tokens.
 /// Every preset names one rule; see AGENTS.md "Adding a preset" before adding another.
@@ -297,6 +299,13 @@ pub fn check_sheets(count: usize, cap: usize, max_sheets: usize) -> Result<usize
     Ok(sheets)
 }
 
+/// The aspect ratio (width / height) grids are planned for; 1.0 without items.
+pub fn median_aspect(aspects: impl Iterator<Item = f64>) -> f64 {
+    let mut aspects: Vec<f64> = aspects.collect();
+    aspects.sort_by(f64::total_cmp);
+    aspects.get(aspects.len() / 2).copied().unwrap_or(1.0)
+}
+
 /// Splits `count` items into evenly filled sheets.
 pub fn plan(
     count: usize,
@@ -482,6 +491,13 @@ mod tests {
             (grid.cell_width, grid.cell_height, grid.cols, grid.rows),
             (320, 240, 2, 2)
         );
+    }
+
+    #[test]
+    fn median_aspect_ignores_outliers() {
+        assert_eq!(median_aspect([0.7, 5.0, 0.7].into_iter()), 0.7);
+        assert_eq!(median_aspect([1.0, 2.0].into_iter()), 2.0);
+        assert_eq!(median_aspect(std::iter::empty()), 1.0);
     }
 
     #[test]

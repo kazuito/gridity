@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::builder::RangedU64ValueParser;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use image::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,14 +23,6 @@ Examples:
 Output: absolute paths of the written sheets, one per line (or a JSON manifest with --json).
 For agents: run `gridity guide` for usage, recipes and the output schema.";
 
-const TEXT_EXAMPLES: &str = "\
-Examples:
-  gridity text report.pdf                        # every page
-  gridity text report.pdf --pages 3-5 --json     # text plus content type per page
-
-Each page starts with a line like `--- p.3 · mixed · body 11pt ---`. Pages marked
-`mixed` or `graphics` have figures or text that cannot be extracted: render them.";
-
 const EXPORT_EXAMPLES: &str = "\
 Examples:
   gridity export slides.pdf --pages 6 --crop 0.53,0.76,0.42,0.1 -o figs/lts.png
@@ -50,10 +42,15 @@ For agents: run `gridity guide` for usage, recipes and the output schema.";
 #[command(
     name = "gridity",
     version,
+    disable_version_flag = true,
     about = "Arrange PDF pages, video frames and images into labeled grid sheets for LLM vision",
     after_help = ROOT_HELP
 )]
 pub struct Cli {
+    /// Print version
+    #[arg(short = 'v', long, action = ArgAction::Version)]
+    version: (),
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -69,16 +66,37 @@ pub enum Command {
     #[command(
         after_help = EXPORT_EXAMPLES,
         mut_arg("count", |a| a.help("Take N evenly spaced frames (video and animations need --count, --every or --at)")),
-        mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half [default: whole]")),
+        mut_arg("crop", |a| a.help("Write only part of every page, frame or image: X,Y,W,H as fractions of its displayed size, e.g. \"0,0.5,1,0.5\" for the bottom half; video, GIF and image regions keep their native pixels [default: whole]")),
     )]
     Export(Box<ExportArgs>),
-    /// Print the visible text of PDF pages, with each page's content type
-    #[command(after_help = TEXT_EXAMPLES)]
-    Text(TextArgs),
     /// Print usage documentation for agents (Markdown)
     Guide(GuideArgs),
-    /// Serve render, probe, text and guide as MCP tools over stdin/stdout
+    /// Serve render, probe and guide as MCP tools over stdin/stdout
     Mcp(McpArgs),
+    /// Print version
+    #[command(visible_alias = "v")]
+    Version,
+}
+
+impl Command {
+    /// Whether errors are also printed as JSON on stdout.
+    pub fn json(&self) -> bool {
+        match self {
+            Command::Render(args) => args.json,
+            Command::Export(args) => args.json,
+            Command::Probe(args) => args.json,
+            Command::Guide(_) | Command::Mcp(_) | Command::Version => false,
+        }
+    }
+
+    pub fn jobs(&self) -> Option<usize> {
+        match self {
+            Command::Render(args) => args.jobs,
+            Command::Export(args) => args.jobs,
+            Command::Mcp(args) => args.jobs,
+            Command::Probe(_) | Command::Guide(_) | Command::Version => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize, Serialize, JsonSchema)]
@@ -239,7 +257,8 @@ pub struct SelectionArgs {
     pub at: Option<String>,
 
     /// Show only part of every page, frame or image: X,Y,W,H as fractions of its displayed
-    /// size, e.g. "0,0.5,1,0.5" for the bottom half [default: whole]
+    /// size, e.g. "0,0.5,1,0.5" for the bottom half; video, GIF and image regions keep their
+    /// native pixels and are never enlarged [default: whole]
     #[arg(long, value_name = "X,Y,W,H", help_heading = "Selection")]
     pub crop: Option<String>,
 }
@@ -279,11 +298,11 @@ pub struct LayoutArgs {
     pub max_sheets: usize,
 
     /// Space between cells in pixels (0-1000)
-    #[arg(long, value_name = "PX", default_value_t = 8, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
+    #[arg(long, value_name = "PX", default_value_t = 4, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub gap: u32,
 
     /// Space around the grid in pixels (0-1000)
-    #[arg(long, value_name = "PX", default_value_t = 12, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
+    #[arg(long, value_name = "PX", default_value_t = 6, value_parser = clap::value_parser!(u32).range(0..=1000), help_heading = "Layout")]
     pub padding: u32,
 }
 
@@ -454,24 +473,6 @@ pub struct ProbeArgs {
     /// Analyze every PDF page: content type, text size, images and drawings
     #[arg(long)]
     pub per_page: bool,
-
-    /// Print JSON
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct TextArgs {
-    /// PDF file
-    #[arg(value_name = "INPUT")]
-    pub input: PathBuf,
-
-    /// Pages to print, 1-based: "1-3,5,10-", "-4" [default: all]
-    #[arg(long, value_name = "LIST")]
-    pub pages: Option<String>,
-
-    #[command(flatten)]
-    pub password: PasswordArgs,
 
     /// Print JSON
     #[arg(long)]

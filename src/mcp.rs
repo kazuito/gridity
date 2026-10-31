@@ -16,8 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::cli::{Cli, Command, Detail, Format, InputKind, McpArgs, Preset};
-use crate::error::{CliError, ErrorKind, Reason, usage};
-use crate::extract::TextReport;
+use crate::error::{CliError, Reason, describe, usage};
 use crate::layout::MAX_SHEETS;
 use crate::output::{Manifest, base64_len, format_from_extension};
 use crate::probe::ProbeReport;
@@ -31,8 +30,8 @@ const MAX_RESULT_BASE64_BYTES: usize = 20_000_000;
 
 const INSTRUCTIONS: &str = "gridity arranges PDF pages, video frames, GIF/APNG frames and \
 images into labeled grid sheets sized for Claude's vision limits. Typical flow: probe the \
-input (its suggested_calls are ready-made tool calls), read PDF text pages with `text` (long \
-documents come in parts: follow next_pages), then `render` only what needs to be seen. To \
+input (its suggested_calls are ready-made tool calls; with per_page it lists the PDF pages \
+that a text extractor reads for fewer tokens), then `render` only what needs to be seen. To \
 zoom in, render with `ruler: true` and pass the values read off the ruler as `crop`. Call \
 `guide` for options and recipes.";
 
@@ -58,7 +57,8 @@ struct RenderParams {
     count: Option<usize>,
     /// Frames at explicit times: "0:10,1:30".
     at: Option<String>,
-    /// Region of every page/frame/image as X,Y,W,H fractions, e.g. "0,0.5,1,0.5".
+    /// Region of every page/frame/image as X,Y,W,H fractions, e.g. "0,0.5,1,0.5". Video,
+    /// GIF and image regions keep their native pixels and are never enlarged.
     crop: Option<String>,
     /// Sheet size limits (default compat).
     preset: Option<Preset>,
@@ -114,27 +114,6 @@ struct ProbeParams {
     /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
     password_file: Option<String>,
 }
-
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct TextParams {
-    /// PDF file.
-    input: String,
-    /// Pages, 1-based: "1-3,5,10-".
-    pages: Option<String>,
-    /// File holding the PDF password (or set GRIDITY_PDF_PASSWORD for the server).
-    password_file: Option<String>,
-    /// Characters of page JSON in the result (default 40000). Pages beyond it are left out
-    /// and named in next_pages.
-    #[schemars(range(min = MIN_TEXT_CHARS, max = MAX_TEXT_CHARS))]
-    max_chars: Option<usize>,
-}
-
-/// About 10K tokens of Latin text, under the 50K characters Claude Code keeps inline.
-const DEFAULT_TEXT_CHARS: usize = 40_000;
-const MIN_TEXT_CHARS: usize = 1_000;
-/// Leaves room for the summary and source under `MAX_INLINE_TEXT_CHARS`.
-const MAX_TEXT_CHARS: usize = 400_000;
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -252,24 +231,16 @@ impl Server {
             Value::Object(_) => params["arguments"].clone(),
             _ => return Err((-32602, "arguments must be an object".to_string())),
         };
-        if !matches!(name, "render" | "probe" | "text" | "guide") {
+        if !matches!(name, "render" | "probe" | "guide") {
             return Err((-32602, format!("unknown tool: {name}")));
         }
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| match name {
             "render" => self.render(parse_params(arguments)?),
             "probe" => self.probe(parse_params(arguments)?),
-            "text" => self.text(parse_params(arguments)?),
             _ => guide(parse_params(arguments)?),
         }))
-        .unwrap_or_else(|panic| {
-            Err(CliError::new(
-                ErrorKind::Runtime,
-                Reason::Internal,
-                format!("internal error: {}", crate::panic_message(&*panic)),
-            )
-            .into())
-        });
-        Ok(outcome.unwrap_or_else(|err| tool_error(&crate::describe(&err))))
+        .unwrap_or_else(|panic| Err(crate::error::from_panic(&*panic).into()));
+        Ok(outcome.unwrap_or_else(|err| tool_error(&describe(&err))))
     }
 
     fn render(&self, p: RenderParams) -> Result<Value> {
@@ -335,63 +306,6 @@ impl Server {
             "probe report; make each suggested_calls entry as given (tool + arguments):",
             Vec::new(),
         ))
-    }
-
-    fn text(&self, p: TextParams) -> Result<Value> {
-        let max_chars = p.max_chars.unwrap_or(DEFAULT_TEXT_CHARS);
-        if !(MIN_TEXT_CHARS..=MAX_TEXT_CHARS).contains(&max_chars) {
-            return Err(usage(
-                Reason::InvalidValue,
-                format!("max_chars {max_chars} is out of range"),
-            )
-            .with_hint(format!(
-                "use max_chars within {MIN_TEXT_CHARS}-{MAX_TEXT_CHARS} (default {DEFAULT_TEXT_CHARS})"
-            ))
-            .into());
-        }
-        let mut argv = Argv::new("text");
-        argv.value("pages", p.pages);
-        argv.value("password-file", self.password_file(p.password_file)?);
-        let Command::Text(args) = argv.parse(self.inputs(vec![p.input])?)? else {
-            unreachable!("argv starts with text")
-        };
-        let mut report: TextReport = crate::extract::report(args)?;
-        let visual = report.visual_pages();
-        let selected = report.pages.len();
-        let kept_chars = report.fit(max_chars)?;
-        let returned: Vec<usize> = report.pages.iter().map(|p| p.page).collect();
-        let returned = crate::render::compact_ranges(&returned);
-        let mut notes = Vec::new();
-        if kept_chars > max_chars {
-            notes.push(format!(
-                "p.{returned} alone has {kept_chars} characters, more than max_chars {max_chars}, \
-                 and is returned whole"
-            ));
-        }
-        if let Some(next) = &report.next_pages {
-            notes.push(format!(
-                "returned {} of {selected} selected pages (p.{returned}); call text again with \
-                 pages: \"{next}\" for the rest, or raise max_chars",
-                report.pages.len()
-            ));
-        }
-        if !visual.is_empty() {
-            let scope = if report.next_pages.is_some() {
-                "of all selected pages, "
-            } else {
-                ""
-            };
-            notes.push(format!(
-                "{scope}p.{} show formulas, figures or text that extraction cannot capture, render them",
-                crate::render::compact_ranges(&visual)
-            ));
-        }
-        let summary = if notes.is_empty() {
-            "page text:".to_string()
-        } else {
-            format!("page text; {}:", notes.join("; "))
-        };
-        Ok(success(&report, &summary, Vec::new()))
     }
 
     /// Input paths, checked against `--root` when one is given.
@@ -618,7 +532,6 @@ fn parameter_names() -> Vec<String> {
     [
         schema_for!(RenderParams),
         schema_for!(ProbeParams),
-        schema_for!(TextParams),
         schema_for!(GuideParams),
     ]
     .iter()
@@ -725,20 +638,11 @@ fn tools() -> Vec<Value> {
         large_text(tool(
             "probe",
             "Page count, duration, resolution and sheet estimates for an input; with per_page, \
-             which PDF pages need to be seen as images. Returns suggested_calls: tool calls to \
+             which PDF pages need to be seen as images and which a text extractor reads \
+             (text_pages). Returns suggested_calls: tool calls to \
              make as given.",
             schema_for!(ProbeParams),
             Some(schema_for!(ProbeReport)),
-            read_only.clone(),
-        )),
-        large_text(tool(
-            "text",
-            "Visible text of PDF pages with each page's content type. Reading text costs far \
-             fewer tokens than images; render pages marked mixed or graphics. Returns the \
-             leading pages that fit in max_chars (default 40000) and names the rest in \
-             next_pages; call again with pages: next_pages to read on.",
-            schema_for!(TextParams),
-            Some(schema_for!(TextReport)),
             read_only.clone(),
         )),
         tool(
@@ -775,8 +679,7 @@ fn tool(
 /// https://code.claude.com/docs/en/env-vars (MAX_MCP_OUTPUT_TOKENS), checked 2026-10-22.
 const MAX_INLINE_TEXT_CHARS: usize = 500_000;
 
-/// Keeps long text results (`text` up to `max_chars`, `probe` with `per_page` on long PDFs)
-/// in the conversation in Claude Code.
+/// Keeps long `probe` results (`per_page` on long PDFs) in the conversation in Claude Code.
 fn large_text(mut tool: Value) -> Value {
     tool["_meta"] = json!({ "anthropic/maxResultSizeChars": MAX_INLINE_TEXT_CHARS });
     tool
@@ -880,7 +783,7 @@ mod tests {
     fn tools_list_their_schemas() {
         let tools = tools();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["render", "probe", "text", "guide"]);
+        assert_eq!(names, ["render", "probe", "guide"]);
         assert_eq!(tools[0]["inputSchema"]["required"], json!(["inputs"]));
         assert_eq!(tools[0]["outputSchema"]["type"], "object");
         assert!(tools[0]["inputSchema"]["properties"]["password"].is_null());
@@ -945,27 +848,10 @@ mod tests {
     }
 
     #[test]
-    fn text_results_stay_inline_within_max_chars() {
+    fn probe_results_stay_inline() {
         let tools = tools();
-        let text = &tools[2];
-        assert_eq!(text["_meta"]["anthropic/maxResultSizeChars"], 500_000);
-        let max_chars = &text["inputSchema"]["properties"]["max_chars"];
-        assert_eq!(max_chars["minimum"], MIN_TEXT_CHARS);
-        assert_eq!(max_chars["maximum"], MAX_TEXT_CHARS);
-        const { assert!(MAX_TEXT_CHARS < MAX_INLINE_TEXT_CHARS) };
-        assert!(tools[3].get("_meta").is_none());
-
-        let response = server().handle_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"text","arguments":{"input":"x.pdf","max_chars":999}}}"#,
-        );
-        let result = &response.unwrap()["result"];
-        assert_eq!(result["isError"], true);
-        let message = result["content"][0]["text"].as_str().unwrap();
-        assert!(message.contains("reason: invalid_value"), "{message}");
-        assert!(
-            message.contains("max_chars within 1000-400000"),
-            "{message}"
-        );
+        assert_eq!(tools[1]["_meta"]["anthropic/maxResultSizeChars"], 500_000);
+        assert!(tools[2].get("_meta").is_none());
     }
 
     #[test]
@@ -1032,7 +918,7 @@ mod tests {
     #[test]
     fn guide_topics_are_an_enum() {
         let tools = tools();
-        let schema = &tools[3]["inputSchema"];
+        let schema = &tools[2]["inputSchema"];
         assert!(schema["required"].as_array().is_none_or(|r| r.is_empty()));
         let topics: Vec<&str> = schema["properties"]["topic"]["enum"]
             .as_array()
@@ -1048,7 +934,7 @@ mod tests {
         let unknown = guide(GuideParams {
             topic: Some("nope".to_string()),
         });
-        let error = crate::describe(&unknown.unwrap_err());
+        let error = describe(&unknown.unwrap_err());
         assert_eq!(error.reason, Reason::UnknownTopic);
     }
 

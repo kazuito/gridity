@@ -34,7 +34,11 @@ src/
   main.rs        entry point; maps errors to exit codes; JSON errors with --json
   cli.rs         clap derive definitions (all flags, defaults, help text)
   error.rs       CliError { kind, reason, message, hint }; ErrorKind -> exit code;
-                 Reason -> stable `reason` string in JSON errors
+                 Reason -> stable `reason` string in JSON errors; describe() and
+                 from_panic() turn any error or panic into a CliError
+  kind.rs        per-input-kind defaults on `impl InputKind`: name, format, label, label
+                 position, template variables, min_cell, guide topic
+  template.rs    `--label` / `--name` templates: validate_template(), expand_template() in one pass
   detect.rs      input type detection (magic bytes, extensions, APNG acTL check)
   select.rs      pure parsing: --pages, times, --crop, sampling (Count/Every/At), time labels
   layout.rs      pure layout math: Limits, fits(), token_cost(), best_grid(), capacity(), plan()
@@ -45,18 +49,16 @@ src/
   output.rs      output paths (tmp dir + hash), encoding, JSON structs (serde + schemars),
                  SCHEMA_VERSION
   render.rs      `render` command: wires everything together; shared helpers for `probe`
-                 and `export` (selection, flag checks, templates)
+                 and `export` (selection, flag checks, source info)
   export.rs      `export` command: one file per selected item, no sheet layout; file names
                  from `--name`, PDF size from `--dpi`
   ruler.rs       pure ruler math: steps in hundredths, ticks in page/frame fractions
   probe.rs       `probe` command: source info, per-detail estimates and scale, `--per-page`
                  PDF analysis, suggested commands
-  extract.rs     `text` command: visible PDF text per page with its content type
-  pagetext.rs    pure page analysis: text assembly, text sizes, coverage, content type
+  pagetext.rs    pure page analysis: text lines, text sizes, coverage, content type
   guide.rs       `guide` command: include_str! of docs/guide/*.md
   mcp.rs         `mcp` command: synchronous JSON-RPC over stdin/stdout; tool parameters
-                 become CLI arguments parsed by clap, then render::execute / probe::report /
-                 extract::report
+                 become CLI arguments parsed by clap, then render::execute / probe::report
   source/
     mod.rs       Item, ItemKey, LabelVars, enum Source, fit_size(), Warnings
     pdf.rs       hayro renderer (`render_page`) and page scanner (`scan_page`, `Collector`)
@@ -86,7 +88,7 @@ assets/fonts/    embedded font + its OFL license (keep OFL.txt next to the font)
 `None`), then sizes each item (`export_size`), names it (`file_names`), and renders and
 writes the items in memory-bounded batches without `compose`.
 
-`probe` and `text` scan PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
+`probe` scans PDF pages with `PdfSource::scan` (→ `pagetext::PageScan`) and
 summarize them with `pagetext::summarize`.
 
 Each source turns a selection into `Item`s (aspect ratio, optional native size, key, label
@@ -110,8 +112,8 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 - **Probe numbers equal render numbers.** `probe` computes `scale` from `layout::plan`
   with real default `RenderArgs`, the same path `render` uses.
 - **Output contract.** For `render` and `export`, stdout carries only output paths (one
-  absolute path per line), the JSON manifest, or the dry-run summary; `probe` prints its report and
-  `text` the page text (or JSON with `--json`). Everything else goes to stderr. Exit codes:
+  absolute path per line), the JSON manifest, or the dry-run summary; `probe` prints its report (or JSON
+  with `--json`). Everything else goes to stderr. Exit codes:
   0 ok, 1 runtime, 2 usage, 3 input, 4 dependency. With `--json`, errors are also
   printed as `{"error": {...}}` on stdout. For `mcp`, stdout carries only JSON-RPC
   messages, one per line; nothing reached from a tool call may print to stdout.
@@ -122,10 +124,10 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
   result. `reason` names (`error::Reason`) are never renamed, and each is listed in
   `docs/guide/output.md` (a unit test checks this).
 - **Computing is separate from printing.** `render::execute`, `export::execute`,
-  `probe::report` and `extract::report` return values and never write to stdout; their `run` functions print.
+  and `probe::report` return values and never write to stdout; their `run` functions print.
 - **Flags for another input type are errors**, never silently ignored (`check_flags`).
-  Label and `--name` templates may only use the variables of the input kind (`label_vars`,
-  `export::name_vars`).
+  Label and `--name` templates may only use the variables of the input kind (`InputKind::label_vars`,
+  `InputKind::name_vars` in `kind.rs`).
 - **Rulers and crops share page coordinates.** `--crop` is always relative to the whole
   page or frame, and ruler values are too, also inside a cropped cell. Rulers are drawn
   over placed images only; they never change the layout or the manifest.
@@ -176,13 +178,14 @@ item that cannot be decoded becomes a gray placeholder of the planned size with 
 **Adding an input kind**
 Add an `InputKind` variant, detection in `detect.rs`, a module in `source/` with
 `open` / `items` / `render`, a `Source` variant, and a case in every `match` in
-`render.rs` and `probe.rs` (the compiler lists them). Also add defaults: label, label
-position, format, `min_cell`, label variables, and a guide topic.
+`render.rs`, `probe.rs` and `kind.rs` (the compiler lists them); `kind.rs` holds the
+defaults: label, label position, format, `min_cell`, template variables, and a guide topic.
 
 **Tuning page analysis**
 Thresholds for content types and `READABLE_PX` are constants in `pagetext.rs`. Check
-changes with `gridity text` / `gridity probe --per-page` on `samples/inputs/*.pdf` and a
-real slide deck or paper, and keep `docs/guide/text.md` in sync.
+changes with `gridity probe --per-page` on `samples/inputs/*.pdf` and a real slide deck or
+paper, and keep `docs/guide/pages.md` in sync. gridity does not extract text for reading;
+that is left to dedicated tools (docling, MarkItDown).
 
 **Adding a preset** (e.g. for another provider)
 1. Read the provider's image documentation first; never use remembered numbers. Put the URL
@@ -194,7 +197,7 @@ real slide deck or paper, and keep `docs/guide/text.md` in sync.
    sensible counts, and update `docs/guide/layout.md` and `preset_name`.
 
 **Tuning `--detail`**
-`render::min_cell` holds the minimum cell long edge per kind and detail. It is calibrated
+`InputKind::min_cell` (`kind.rs`) holds the minimum cell long edge per kind and detail. It is calibrated
 so the compat preset gives PDF 9/4/2, video 16/12/6 and images 12/6/3 items per sheet
 (A4 and Letter). Check with `gridity probe <file>` and
 `gridity render <file> --per-sheet N --dry-run`, and keep `docs/guide/layout.md` in sync.

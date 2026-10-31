@@ -4,8 +4,8 @@ mod compose;
 mod detect;
 mod error;
 mod export;
-mod extract;
 mod guide;
+mod kind;
 mod layout;
 mod mcp;
 mod output;
@@ -15,16 +15,16 @@ mod render;
 mod ruler;
 mod select;
 mod source;
+mod template;
 mod text;
 
-use std::any::Any;
 use std::panic::AssertUnwindSafe;
 use std::process::ExitCode;
 
 use clap::Parser;
 
 use cli::{Cli, Command};
-use error::{CliError, ErrorKind, Reason};
+use error::{CliError, ErrorKind, Reason, describe};
 use output::{ErrorInfo, ErrorReport, SCHEMA_VERSION};
 
 fn main() -> ExitCode {
@@ -32,37 +32,22 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(err) => return report_parse_error(err),
     };
-    let json = match &cli.command {
-        Command::Render(args) => args.json,
-        Command::Export(args) => args.json,
-        Command::Probe(args) => args.json,
-        Command::Text(args) => args.json,
-        Command::Guide(_) | Command::Mcp(_) => false,
-    };
-    configure_threads(match &cli.command {
-        Command::Render(args) => args.jobs,
-        Command::Export(args) => args.jobs,
-        Command::Mcp(args) => args.jobs,
-        _ => None,
-    });
+    let json = cli.command.json();
+    configure_threads(cli.command.jobs());
 
     // A panic still ends with an exit code and, with --json, a JSON error.
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| match cli.command {
         Command::Render(args) => render::run(*args),
         Command::Export(args) => export::run(*args),
         Command::Probe(args) => probe::run(args),
-        Command::Text(args) => extract::run(args),
         Command::Guide(args) => guide::run(args.topic.as_deref()),
         Command::Mcp(args) => mcp::run(args),
+        Command::Version => {
+            println!("gridity {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
     }))
-    .unwrap_or_else(|panic| {
-        Err(CliError::new(
-            ErrorKind::Runtime,
-            Reason::Internal,
-            format!("internal error: {}", panic_message(&*panic)),
-        )
-        .into())
-    });
+    .unwrap_or_else(|panic| Err(error::from_panic(&*panic).into()));
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => report(&err, json),
@@ -94,14 +79,6 @@ fn report_parse_error(err: clap::Error) -> ExitCode {
     })
 }
 
-fn panic_message(panic: &(dyn Any + Send)) -> &str {
-    panic
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("unknown panic")
-}
-
 fn configure_threads(jobs: Option<usize>) {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -123,18 +100,6 @@ fn report(err: &anyhow::Error, json: bool) -> ExitCode {
         print_json_error(&error);
     }
     ExitCode::from(error.kind.exit_code() as u8)
-}
-
-/// The error as a `CliError`, with the whole context chain as message; other errors are
-/// runtime errors with reason `other`.
-pub fn describe(err: &anyhow::Error) -> CliError {
-    let cli_error = err.downcast_ref::<CliError>();
-    CliError {
-        kind: cli_error.map_or(ErrorKind::Runtime, |e| e.kind),
-        reason: cli_error.map_or(Reason::Other, |e| e.reason),
-        message: format!("{err:#}"),
-        hint: cli_error.and_then(|e| e.hint.clone()),
-    }
 }
 
 pub fn error_report(error: &CliError) -> ErrorReport {

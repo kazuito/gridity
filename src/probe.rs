@@ -6,14 +6,12 @@ use serde::Serialize;
 use crate::cli::{Cli, Command, Detail, InputKind, Preset, ProbeArgs, RenderArgs};
 use crate::detect::detect;
 use crate::error::{Reason, usage};
-use crate::layout::{capacity, plan};
+use crate::layout::{MAX_CAPACITY, capacity, median_aspect, plan};
 use crate::output::{SCHEMA_VERSION, SourceInfo};
 use crate::pagetext::{
     Content, PageSummary, READABLE_PX, SKIMMABLE_PX, document_body_pt, summarize,
 };
-use crate::render::{
-    Layout, build_layout, compact_ranges, kind_name, native_bounds, preset_name, round3,
-};
+use crate::render::{Layout, build_layout, compact_ranges, native_bounds, preset_name, round3};
 use crate::select::{Sampling, format_time, sample_count, spread_pages};
 use crate::source::pdf::PdfSource;
 use crate::source::{Source, fit_size};
@@ -45,6 +43,10 @@ pub struct ProbeReport {
     /// Every page with `--per-page` (PDF).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pages: Option<Vec<PageReport>>,
+    /// Pages of content type `text` as a page list, e.g. "1-3,8" (`--per-page`); absent when
+    /// there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_pages: Option<String>,
     pub warnings: Vec<String>,
 }
 
@@ -83,7 +85,6 @@ pub struct SuggestedCall {
 #[serde(rename_all = "lowercase")]
 pub enum Tool {
     Render,
-    Text,
     Probe,
 }
 
@@ -91,7 +92,6 @@ impl Tool {
     fn name(self) -> &'static str {
         match self {
             Tool::Render => "render",
-            Tool::Text => "text",
             Tool::Probe => "probe",
         }
     }
@@ -101,12 +101,7 @@ impl Tool {
 /// whenever they write more sheets than the tool allows by default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, JsonSchema)]
 pub struct CallArguments {
-    /// For `render` and `probe`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inputs: Option<Vec<String>>,
-    /// For `text`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input: Option<String>,
+    pub inputs: Vec<String>,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<InputKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,7 +158,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
     let kind = detect(&args.inputs, args.kind)?;
     let source = Source::open(kind, &args.inputs, &args.source)?;
     let (count, shapes) = item_shapes(&source);
-    let aspect = median_aspect(&shapes);
+    let aspect = median_aspect(shapes.iter().map(|s| s.aspect));
     let pages = page_summaries(&source, args.per_page)?;
     let body_pt = pages
         .as_ref()
@@ -187,7 +182,13 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
         let mut layout = build_layout(&default_render_args(args.preset, name), kind)?;
         layout.options.max_cell = native_bounds(&source);
         layout.options.max_sheets = usize::MAX;
-        let per_sheet = capacity(aspect, layout.limits, layout.chrome, &layout.options, 200);
+        let per_sheet = capacity(
+            aspect,
+            layout.limits,
+            layout.chrome,
+            &layout.options,
+            MAX_CAPACITY,
+        );
         let scale = sheet_scale(&layout, count.unwrap_or(per_sheet), &shapes)?;
         let visual_scale = match &visual_shapes {
             Some(shapes) => Some(round3(sheet_scale(&layout, shapes.len(), shapes)?)),
@@ -215,6 +216,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
         suggested_calls: suggested.iter().map(|s| s.call(&target)).collect(),
         estimates,
         body_text_pt: body_pt,
+        text_pages: per_page.and_then(text_pages),
         pages: per_page.map(|pages| {
             pages
                 .iter()
@@ -233,7 +235,7 @@ pub fn report(args: ProbeArgs) -> Result<ProbeReport> {
 fn sheet_scale(layout: &Layout, count: usize, shapes: &[Shape]) -> Result<f64> {
     let sheets = plan(
         count,
-        median_aspect(shapes),
+        median_aspect(shapes.iter().map(|s| s.aspect)),
         layout.limits,
         layout.chrome,
         &layout.options,
@@ -252,6 +254,16 @@ fn sheet_scale(layout: &Layout, count: usize, shapes: &[Shape]) -> Result<f64> {
         .fold(f64::INFINITY, f64::min))
 }
 
+/// Pages that read as well from a text extractor as from an image.
+fn text_pages(pages: &[(usize, PageSummary)]) -> Option<String> {
+    let numbers: Vec<usize> = pages
+        .iter()
+        .filter(|(_, s)| s.content == Content::Text)
+        .map(|(page, _)| *page)
+        .collect();
+    (!numbers.is_empty()).then(|| compact_ranges(&numbers))
+}
+
 /// Pages worth rendering: those with figures, formulas or text that cannot be extracted.
 fn visual_pages(pages: &[(usize, PageSummary)]) -> Vec<&(usize, PageSummary)> {
     pages
@@ -268,7 +280,7 @@ fn page_summaries(source: &Source, per_page: bool) -> Result<Option<Vec<(usize, 
                 Reason::FlagNotForInput,
                 format!(
                     "--per-page works with PDF input only, not {}",
-                    kind_name(source.kind())
+                    source.kind().name()
                 ),
             )
             .with_hint("see: gridity guide pdf")
@@ -349,12 +361,6 @@ fn page_shape((w, h): (f32, f32)) -> Shape {
     }
 }
 
-fn median_aspect(shapes: &[Shape]) -> f64 {
-    let mut aspects: Vec<f64> = shapes.iter().map(|s| s.aspect).collect();
-    aspects.sort_by(f64::total_cmp);
-    aspects[aspects.len() / 2]
-}
-
 /// A suggested command, written out both as a command line and as an MCP tool call.
 struct Suggestion {
     tool: Tool,
@@ -413,12 +419,10 @@ impl Suggestion {
     /// Complete arguments for a server or command line whose sheet limit defaults to
     /// `default_max_sheets`.
     fn arguments(&self, target: &Target, default_max_sheets: usize) -> CallArguments {
-        let text = self.tool == Tool::Text;
         CallArguments {
-            inputs: (!text).then(|| target.inputs.clone()),
-            input: target.inputs.first().filter(|_| text).cloned(),
-            kind: target.kind.filter(|_| !text),
-            preset: target.preset.filter(|_| !text),
+            inputs: target.inputs.clone(),
+            kind: target.kind,
+            preset: target.preset,
             password_file: target.password_file.clone(),
             max_sheets: self
                 .arguments
@@ -438,7 +442,7 @@ impl Suggestion {
     fn command(&self, target: &Target) -> String {
         let a = self.arguments(target, crate::layout::DEFAULT_MAX_SHEETS);
         let mut line = format!("gridity {}", self.tool.name());
-        for input in a.inputs.iter().flatten().chain(&a.input) {
+        for input in &a.inputs {
             line.push(' ');
             line.push_str(&quote(input));
         }
@@ -455,7 +459,7 @@ impl Suggestion {
         flag("detail", a.detail.map(|d| detail_name(d).to_string()));
         flag("per-sheet", a.per_sheet.map(|n| n.to_string()));
         flag("max-sheets", a.max_sheets.map(|n| n.to_string()));
-        flag("type", a.kind.map(|k| kind_name(k).to_string()));
+        flag("type", a.kind.map(|k| k.name().to_string()));
         flag("preset", a.preset.map(|p| preset_name(p).to_string()));
         flag("password-file", a.password_file.as_deref().map(quote));
         if a.per_page == Some(true) {
@@ -481,9 +485,6 @@ fn suggestions(
             let page_sheets =
                 |detail: usize, pages: &[usize]| planned_sheets(&layouts[detail], pdf, pages);
             let detail = readable_detail(estimates, body_pt);
-            if body_pt.is_some() {
-                list.push(Suggestion::new(Tool::Text, CallArguments::default()));
-            }
             match pages {
                 Some(pages) => {
                     let visual = visual_pages(pages);
@@ -632,7 +633,7 @@ fn planned_sheets(layout: &Layout, pdf: &PdfSource, pages: &[usize]) -> Result<u
         .collect();
     let sheets = plan(
         shapes.len(),
-        median_aspect(&shapes),
+        median_aspect(shapes.iter().map(|s| s.aspect)),
         layout.limits,
         layout.chrome,
         &layout.options,
@@ -686,6 +687,21 @@ pub fn quote(s: &str) -> String {
         format!("\"{s}\"")
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+/// Largest native size among raster inputs, like `render::native_bounds`.
+fn native_size(source: &SourceInfo) -> Option<(u32, u32)> {
+    match source {
+        SourceInfo::Pdf { .. } => None,
+        SourceInfo::Video { width, height, .. } | SourceInfo::Anim { width, height, .. } => {
+            Some((*width, *height))
+        }
+        SourceInfo::Images { files, .. } => files
+            .as_deref()?
+            .iter()
+            .map(|f| (f.width, f.height))
+            .reduce(|a, b| (a.0.max(b.0), a.1.max(b.1))),
     }
 }
 
@@ -788,11 +804,23 @@ fn print_text(report: &ProbeReport) {
             estimate.detail, estimate.per_sheet
         );
     }
+    if let Some((width, height)) = native_size(source) {
+        println!(
+            "  never enlarged: a cell shows at most {width}x{height} px, a --crop region only its own pixels"
+        );
+    }
     if let Some(pages) = &report.pages {
         println!("pages:");
         for page in pages {
             println!("  p.{:<4} {}", page.page, page.summary.describe());
         }
+    }
+    if let Some(text_pages) = &report.text_pages {
+        println!("text pages (a text extractor reads them for fewer tokens): {text_pages}");
+    }
+    if report.suggestions.is_empty() {
+        println!("suggested commands: none, no page needs to be seen");
+        return;
     }
     println!(
         "suggested commands ({kind} input; heuristic starting points, adjust after looking at the sheets):"
@@ -885,7 +913,7 @@ mod tests {
             SuggestedCall {
                 tool: Tool::Render,
                 arguments: CallArguments {
-                    inputs: Some(vec!["doc.pdf".to_string()]),
+                    inputs: vec!["doc.pdf".to_string()],
                     kind: Some(InputKind::Pdf),
                     pages: Some("2,4-6".to_string()),
                     preset: Some(Preset::Hires),
@@ -894,19 +922,6 @@ mod tests {
                     ..Default::default()
                 },
             }
-        );
-
-        let text = Suggestion::new(Tool::Text, CallArguments::default());
-        assert_eq!(
-            text.command(&target),
-            "gridity text doc.pdf --password-file pw.txt"
-        );
-        assert_eq!(
-            serde_json::to_value(text.call(&target)).unwrap(),
-            serde_json::json!({
-                "tool": "text",
-                "arguments": { "input": "doc.pdf", "password_file": "pw.txt" }
-            })
         );
 
         let probe = Suggestion::new(
@@ -936,7 +951,7 @@ mod tests {
             "gridity render 'my shots' 'it'\\''s.png'"
         );
         assert_eq!(
-            render.call(&target).arguments.inputs.unwrap(),
+            render.call(&target).arguments.inputs,
             ["my shots", "it's.png"]
         );
     }

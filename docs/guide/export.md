@@ -69,7 +69,7 @@ be written with their sizes, without writing anything. `--json` prints:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": { "kind": "pdf", "path": "/abs/slides.pdf", "pages": 24 },
   "files": [
     {

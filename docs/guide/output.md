@@ -30,16 +30,16 @@ and no files.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": { "kind": "pdf", "path": "/abs/deck.pdf", "pages": 42 },
   "limits": { "preset": "compat", "rule": "claude-28px-patch", "max_edge": 1568, "max_tokens": 1568 },
   "sheets": [
     {
       "path": "/abs/tmp/gridity-501/deck-1a2b3c4d5e6f7a8b/deck.grid-01.png",
-      "width": 896, "height": 1319, "est_tokens": 1536, "bytes": 68967,
-      "grid": { "cols": 2, "rows": 2, "cell_width": 432, "cell_height": 611 },
+      "width": 896, "height": 1325, "est_tokens": 1536, "bytes": 68967,
+      "grid": { "cols": 2, "rows": 2, "cell_width": 440, "cell_height": 622 },
       "cells": [
-        { "index": 1, "label": "p.1", "page": 1, "rect": [12, 35, 432, 611], "scale": 0.726 }
+        { "index": 1, "label": "p.1", "page": 1, "rect": [6, 29, 440, 622], "scale": 0.739 }
       ]
     }
   ],
@@ -53,7 +53,7 @@ and no files.
   or `file` (images). `index` is 1-based across the whole render.
 - `rect` is `[x, y, width, height]` of the placed image in sheet pixels.
 - `scale` is sheet pixels per point for PDF pages, and displayed / native pixels for
-  images and frames.
+  images and frames (at most `1.0`: they are never enlarged).
 - `crop` (only with `--crop`) is the shown region as `[x, y, width, height]` fractions.
 - `error` (only when an item could not be decoded) explains why the cell is a gray
   placeholder; the cell keeps its planned `rect`.
@@ -63,23 +63,17 @@ and no files.
 
 ## Versions and schemas
 
-Every JSON document (`render`, `export`, `probe`, `text` and errors) starts with
-`"schema_version": 1`. New fields may appear without a version change; removing, renaming
-or retyping a field raises it. JSON Schemas for all five documents are in the repository
-under `docs/schema/` (`render.schema.json`, `export.schema.json`, `probe.schema.json`,
-`text.schema.json`, `error.schema.json`).
+Every JSON document (`render`, `export`, `probe` and errors) starts with
+`"schema_version": 2`. New fields may appear without a version change; removing, renaming
+or retyping a field raises it. Version 2 removed the `text` command and its document, and
+the `text` tool from `suggested_calls`. JSON Schemas for all four documents are in the
+repository under `docs/schema/` (`render.schema.json`, `export.schema.json`,
+`probe.schema.json`, `error.schema.json`).
 
 ## Export JSON (`gridity export --json`)
 
 `source`, `files` (one per item: `index`, `path`, `page`/`time`/`frame`/`file`, `width`,
 `height`, `scale`, `crop`, `bytes`, `error`) and `warnings`; see `gridity guide export`.
-
-## Text JSON (`gridity text --json`)
-
-- `source`: as above; `pages`: per page `page`, the analysis fields of `gridity guide text`
-  and `text`.
-- `next_pages` (MCP `text` tool only, when pages were left out to fit `max_chars`): the
-  remaining selected pages as a page list, e.g. `"15-50"`; pass it as `pages` to read on.
 
 ## Probe JSON (`gridity probe --json`)
 
@@ -92,12 +86,14 @@ under `docs/schema/` (`render.schema.json`, `export.schema.json`, `probe.schema.
 - `body_text_pt` (PDF): typical body text size of the document.
 - `pages` (`--per-page`): per page `content`, `chars`, `unmapped`, `body_pt`, `small_pt`,
   `scripts`, `short_lines`, `images`, `image_cover`, `vector_cover` (see
-  `gridity guide text`).
+  `gridity guide pages`).
+- `text_pages` (`--per-page`, when there are any): the pages of content type `text` as a
+  page list, e.g. `"1-3,5"`; read them with a PDF text extractor.
 - `suggestions`: ready-to-run commands. They repeat `--type`, `--preset` (unless `compat`)
   and `--password-file` from the probe, and add `--max-sheets` when a render needs more
   than 10 sheets.
 - `suggested_calls`: the same suggestions as MCP tool calls (`gridity guide mcp`), in the
-  same order: `tool` (`render`, `text` or `probe`) and `arguments`, the tool parameters
+  same order: `tool` (`render` or `probe`) and `arguments`, the tool parameters
   as they are (`inputs` unquoted, `max_sheets` when a render needs more than the tool's
   default of 4 sheets).
 - `warnings`: inputs that were skipped (unreadable images, damaged animations).
@@ -109,7 +105,7 @@ gets:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "error": {
     "kind": "usage", "code": 2, "reason": "page_out_of_range",
     "message": "page 99 is out of range: the document has 12 pages",
@@ -132,7 +128,7 @@ gets:
 | Reason | Kind | Meaning |
 |---|---|---|
 | `invalid_argument` | usage | unknown flag, missing value, conflicting flags, mixed inputs |
-| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file, MCP `max_chars`), an `export --name` that gives two items one file name, or an output path that is an input |
+| `invalid_value` | usage | a value that cannot be parsed or is out of range (`--pages`, times, `--crop`, font, password file), an `export --name` that gives two items one file name, or an output path that is an input |
 | `page_out_of_range` | usage | `--pages` beyond the last page |
 | `flag_not_for_input` | usage | a flag for another input type (`--pages` on a video) |
 | `label_variable_not_for_input` | usage | a `--label` or `--name` variable the input type does not have |
@@ -146,7 +142,7 @@ gets:
 | `too_large` | usage | no longer returned (the MCP server now attaches the sheets that fit); the name stays reserved |
 | `not_found` | input | the input path does not exist |
 | `unknown_type` | input | the input type cannot be detected (pass `--type`) |
-| `wrong_type` | input | the input is not of the required type (`text` needs a PDF; video needs a container, not a playlist) |
+| `wrong_type` | input | the input is not of the required type (video needs a container, not a playlist) |
 | `unreadable` | input | a file cannot be read (image header, password file) |
 | `decode_failed` | input | the image or video cannot be decoded |
 | `too_large_to_decode` | input | decoding would need more than 512 MiB |

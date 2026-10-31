@@ -292,7 +292,7 @@ pub fn fnv1a(text: &str) -> u64 {
 
 /// Version of every JSON document gridity prints. Adding fields keeps it; removing, renaming
 /// or retyping a field raises it.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// `render --json`.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -549,7 +549,6 @@ mod tests {
             ("render", schemars::schema_for!(Manifest)),
             ("export", schemars::schema_for!(ExportManifest)),
             ("probe", schemars::schema_for!(crate::probe::ProbeReport)),
-            ("text", schemars::schema_for!(crate::extract::TextReport)),
             ("error", schemars::schema_for!(ErrorReport)),
         ]
     }

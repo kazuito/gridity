@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +177,32 @@ impl fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+/// The error as a `CliError`, with the whole context chain as message; other errors are
+/// runtime errors with reason `other`.
+pub fn describe(err: &anyhow::Error) -> CliError {
+    let cli_error = err.downcast_ref::<CliError>();
+    CliError {
+        kind: cli_error.map_or(ErrorKind::Runtime, |e| e.kind),
+        reason: cli_error.map_or(Reason::Other, |e| e.reason),
+        message: format!("{err:#}"),
+        hint: cli_error.and_then(|e| e.hint.clone()),
+    }
+}
+
+/// A caught panic as an internal error.
+pub fn from_panic(panic: &(dyn Any + Send)) -> CliError {
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic");
+    CliError::new(
+        ErrorKind::Runtime,
+        Reason::Internal,
+        format!("internal error: {message}"),
+    )
+}
 
 pub fn usage(reason: Reason, message: impl Into<String>) -> CliError {
     CliError::new(ErrorKind::Usage, reason, message)

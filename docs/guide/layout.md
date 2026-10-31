@@ -61,7 +61,9 @@ fractions of its displayed size (after page rotation, EXIF orientation and video
 rotation): `0,0,1,0.5` is the top half, `0.5,0.5,0.5,0.5` the bottom-right quarter. Cells
 take the region's shape, the header shows `crop X,Y,W,H`, and each cell in the manifest
 has `"crop": [X, Y, W, H]`. PDF regions are rendered at the cell size; raster regions keep
-their pixels and are not upscaled.
+their pixels and are not upscaled. When `--crop`, `--detail high`, `--preset hires` or
+`--per-sheet` leave a raster cell at native size, a warning says so: further zoom cannot
+enlarge it.
 
 `--crop` is always relative to the whole page or frame, never to an earlier crop: to zoom
 further into a cropped cell, pass the new region in the same coordinates.
@@ -83,7 +85,8 @@ leave it off for reading; it does not change the layout or the manifest.
 
 ## Spacing and colors
 
-- `--gap PX` (8), `--padding PX` (12), each 0-1000
+- `--gap PX` (4), `--padding PX` (6), each 0-1000. The defaults are small so that less of the
+  token budget goes to empty space; each cell has a 1 px frame just outside it, so keep `--gap` at 2 or more
 - `--bg COLOR` (`#ffffff`); colors accept `#rgb`, `#rrggbb`, `#rrggbbaa`, `white`,
   `black`, `gray`, `red`, `transparent`
 

@@ -35,6 +35,31 @@ fn s(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+/// Splits a suggested command line as the shell would, undoing `probe::quote`: '...' with
+/// '\'' for a quote on Unix, "..." on Windows, where a backslash is a path separator.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' => words.extend(word.take()),
+            '\'' if !cfg!(windows) => {
+                let quoted = word.get_or_insert_with(String::new);
+                quoted.extend(chars.by_ref().take_while(|&c| c != '\''));
+            }
+            '"' if cfg!(windows) => {
+                let quoted = word.get_or_insert_with(String::new);
+                quoted.extend(chars.by_ref().take_while(|&c| c != '"'));
+            }
+            '\\' if !cfg!(windows) => word.get_or_insert_with(String::new).extend(chars.next()),
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    words.extend(word);
+    words
+}
+
 /// Same rule as Claude's resizing check for the compat preset.
 fn fits_compat(width: u32, height: u32) -> bool {
     width.div_ceil(28) * 28 <= 1568
@@ -326,7 +351,7 @@ fn probe_scale_matches_rendered_cells() {
 }
 
 #[test]
-fn text_prints_visible_text_per_page() {
+fn per_page_counts_only_visible_text() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");
     write_pdf_pages(
@@ -337,20 +362,14 @@ fn text_prints_visible_text_per_page() {
         ],
     );
 
-    let output = gridity().args(["text", s(&pdf)]).output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.starts_with("--- p.1 · text · "), "{stdout}");
-    assert!(stdout.contains("Line 0 of body text here\nLine 1 of body text here"));
-    assert!(!stdout.contains("Clipped"));
-    assert!(stdout.contains("--- p.2 · graphics · 0 chars"));
-
-    let report = run_json(&["text", s(&pdf), "--pages", "1"]);
-    let page = &report["pages"][0];
-    assert_eq!(page["page"], 1);
-    assert_eq!(page["content"], "text");
-    assert_eq!(page["body_pt"], 11.0);
-    assert_eq!(report["pages"].as_array().unwrap().len(), 1);
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    let pages = probe["pages"].as_array().unwrap();
+    assert_eq!(pages[0]["content"], "text");
+    assert_eq!(pages[0]["body_pt"], 11.0);
+    let visible = "Line 0 of body text here".replace(' ', "").len() * 10;
+    assert_eq!(pages[0]["chars"], visible);
+    assert_eq!(pages[1]["content"], "graphics");
+    assert_eq!(pages[1]["chars"], 0);
 }
 
 /// A page of `size` pt text with `count` superscripts: "x^{2}" repeated, as formulas are.
@@ -368,27 +387,41 @@ fn formula_page(size: usize, count: usize) -> String {
 }
 
 #[test]
-fn text_marks_scripts() {
+fn text_only_pdf_needs_no_render() {
+    let dir = TempDir::new().unwrap();
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf_pages(&pdf, &vec![(595, 842, 0, text_page(10)); 2]);
+
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    assert_eq!(probe["text_pages"], "1-2");
+    assert_eq!(probe["suggestions"], serde_json::json!([]));
+    gridity()
+        .args(["probe", s(&pdf), "--per-page"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "text pages (a text extractor reads them for fewer tokens): 1-2\n\
+             suggested commands: none, no page needs to be seen",
+        ));
+}
+
+#[test]
+fn per_page_marks_formulas() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");
     write_pdf_pages(&pdf, &[(595, 842, 0, formula_page(14, 6))]);
 
-    let output = gridity().args(["text", s(&pdf)]).output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("x^2"), "{stdout}");
-    assert!(
-        stdout.lines().next().unwrap().contains("formulas"),
-        "{stdout}"
-    );
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("p.1 show formulas"), "{stderr}");
+    let probe = run_json(&["probe", s(&pdf), "--per-page"]);
+    let page = &probe["pages"][0];
+    assert_eq!(page["content"], "mixed");
+    assert!(page["scripts"].as_u64().unwrap() >= 5, "{page}");
+    assert!(probe.get("text_pages").is_none());
 }
 
 #[test]
 fn suggested_close_ups_render_for_papers_with_footnotes() {
     let dir = TempDir::new().unwrap();
-    let pdf = dir.path().join("paper.pdf");
+    let pdf = dir.path().join("my paper.pdf");
     let page = format!(
         "{}BT /F1 4 Tf 50 30 Td (footnote set in very small type, forty chars) Tj ET\n\
          0 0 1 rg 50 50 400 300 re f\n",
@@ -406,13 +439,17 @@ fn suggested_close_ups_render_for_papers_with_footnotes() {
         .collect();
     assert!(renders.len() >= 2, "{renders:?}");
     for render in renders {
-        let args: Vec<&str> = render.split_whitespace().skip(1).collect();
-        gridity().args(&args).arg("--dry-run").assert().success();
+        let args = shell_words(render);
+        gridity()
+            .args(&args[1..])
+            .arg("--dry-run")
+            .assert()
+            .success();
     }
 }
 
 #[test]
-fn probe_per_page_suggests_text_and_visual_pages() {
+fn probe_per_page_lists_text_pages_and_renders_visual_pages() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("doc.pdf");
     let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page(10));
@@ -443,7 +480,8 @@ fn probe_per_page_suggests_text_and_visual_pages() {
         .iter()
         .map(|s| s.as_str().unwrap())
         .collect();
-    assert!(suggestions[0].starts_with("gridity text "));
+    assert_eq!(probe["text_pages"], "1,3");
+    assert!(suggestions.iter().all(|s| s.starts_with("gridity render ")));
     assert!(
         suggestions.iter().any(|s| s.contains("--pages 2")),
         "{suggestions:?}"
@@ -453,7 +491,7 @@ fn probe_per_page_suggests_text_and_visual_pages() {
 #[test]
 fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
     let dir = TempDir::new().unwrap();
-    let pdf = dir.path().join("doc.pdf");
+    let pdf = dir.path().join("it's a doc.pdf");
     let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page_sized(10, 14));
     let mut pages = vec![(595, 842, 0, text_page_sized(10, 14))];
     pages.extend(std::iter::repeat_n((595, 842, 0, figure), 9));
@@ -472,7 +510,8 @@ fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
         .map(|s| s.as_str().unwrap())
         .find(|s| s.starts_with("gridity render") && s.contains("--pages 2-10"))
         .expect("a render suggestion for the visual pages");
-    let args: Vec<&str> = render.split_whitespace().skip(1).collect();
+    let words = shell_words(render);
+    let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
     let manifest = run_json(&[&args[..], &["--dry-run"]].concat());
     for cell in manifest["sheets"][0]["cells"].as_array().unwrap() {
         let body_px = 14.0 * cell["scale"].as_f64().unwrap();
@@ -481,7 +520,7 @@ fn suggested_detail_keeps_body_text_readable_on_rendered_pages() {
 }
 
 #[test]
-fn image_only_pdf_suggests_no_text_extraction() {
+fn image_only_pdf_has_no_text_pages() {
     let dir = TempDir::new().unwrap();
     let pdf = dir.path().join("scan.pdf");
     write_pdf_pages(
@@ -489,26 +528,15 @@ fn image_only_pdf_suggests_no_text_extraction() {
         &[(595, 842, 0, "0 0 1 rg 50 50 400 500 re f\n".into())],
     );
     let probe = run_json(&["probe", s(&pdf), "--per-page"]);
-    let suggestions = probe["suggestions"].as_array().unwrap();
-    assert!(
-        suggestions
-            .iter()
-            .all(|s| !s.as_str().unwrap().starts_with("gridity text")),
-        "{suggestions:?}"
-    );
+    assert!(probe.get("text_pages").is_none());
     assert!(probe.get("body_text_pt").is_none());
 }
 
 #[test]
-fn text_and_per_page_reject_other_inputs() {
+fn per_page_rejects_other_inputs() {
     let dir = TempDir::new().unwrap();
     let png = dir.path().join("a.png");
     write_png(&png, 40, 30, 0);
-    gridity()
-        .args(["text", s(&png)])
-        .assert()
-        .code(3)
-        .stderr(predicate::str::contains("not a PDF"));
     gridity()
         .args(["probe", s(&png), "--per-page"])
         .assert()
@@ -587,6 +615,40 @@ fn crop_keeps_raster_inputs_at_native_size() {
 }
 
 #[test]
+fn zooming_past_native_resolution_warns() {
+    let dir = TempDir::new().unwrap();
+    let png = dir.path().join("a.png");
+    write_png(&png, 120, 90, 0);
+    let pdf = dir.path().join("doc.pdf");
+    write_pdf(&pdf, &[(595, 842, 0)]);
+
+    let manifest = run_json(&["render", s(&png), "--crop", "0,0,0.5,1", "--dry-run"]);
+    let warning = manifest["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.contains("native resolution (60x90 px of the crop region)"),
+        "{warning}"
+    );
+    let manifest = run_json(&["render", s(&png), "--detail", "high", "--dry-run"]);
+    assert!(
+        manifest["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("(120x90 px)")
+    );
+
+    for args in [
+        &["render", s(&png), "--dry-run"][..],
+        &["render", s(&pdf), "--crop", "0,0,0.5,0.5", "--dry-run"],
+    ] {
+        assert_eq!(
+            run_json(args)["warnings"],
+            serde_json::json!([]),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn invalid_crop_is_a_usage_error() {
     let dir = TempDir::new().unwrap();
     let png = dir.path().join("a.png");
@@ -610,7 +672,7 @@ fn page_out_of_range_reports_json_error() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(error["schema_version"], 1);
+    assert_eq!(error["schema_version"], 2);
     assert_eq!(error["error"]["kind"], "usage");
     assert_eq!(error["error"]["reason"], "page_out_of_range");
     assert!(
@@ -1144,7 +1206,18 @@ fn argument_errors_are_json_with_json_flag() {
         .args(["render", "--help", "--json"])
         .assert()
         .success();
-    gridity().arg("--version").assert().success();
+}
+
+#[test]
+fn every_version_spelling_prints_the_version() {
+    let expected = format!("gridity {}\n", env!("CARGO_PKG_VERSION"));
+    for arg in ["--version", "-v", "version", "v"] {
+        gridity()
+            .arg(arg)
+            .assert()
+            .success()
+            .stdout(expected.clone());
+    }
 }
 
 #[test]
@@ -1233,7 +1306,7 @@ fn passwords_come_from_a_file_stdin_or_the_environment() {
     assert_eq!(pages(&mut cmd), 1);
 
     let mut cmd = gridity();
-    cmd.args(["text", s(&pdf), "--json", "--password-file", "-"])
+    cmd.args(["probe", s(&pdf), "--json", "--password-file", "-"])
         .write_stdin("secret\r\n");
     assert_eq!(pages(&mut cmd), 1);
 
@@ -1285,16 +1358,13 @@ fn long_pdfs_keep_every_page_in_order() {
         .collect();
     write_pdf_pages(&pdf, &pages);
 
-    let text = run_json(&["text", s(&pdf)]);
-    let texts = text["pages"].as_array().unwrap();
-    assert_eq!(texts.len(), 300);
-    for (i, page) in texts.iter().enumerate() {
-        assert_eq!(page["page"], i + 1);
-        assert_eq!(page["text"], format!("Page {} body", i + 1));
-    }
-
     let probe = run_json(&["probe", s(&pdf), "--per-page"]);
-    assert_eq!(probe["pages"].as_array().unwrap().len(), 300);
+    let pages = probe["pages"].as_array().unwrap();
+    assert_eq!(pages.len(), 300);
+    for (i, page) in pages.iter().enumerate() {
+        assert_eq!(page["page"], i + 1);
+        assert_eq!(page["chars"], format!("Page{}body", i + 1).len());
+    }
 
     let manifest = run_json(&["render", s(&pdf), "--pages", "120,7,299", "--dry-run"]);
     assert_eq!(manifest["limits"]["rule"], "claude-28px-patch");
@@ -1408,7 +1478,7 @@ fn errors_carry_a_reason() {
         "password_incorrect"
     );
     let missing = dir.path().join("missing.pdf");
-    assert_eq!(error(&["text", s(&missing)], 3), "not_found");
+    assert_eq!(error(&["probe", s(&missing)], 3), "not_found");
 
     let video = dir.path().join("clip.mp4");
     std::fs::write(&video, b"\0\0\0\x18ftypmp42").unwrap();
@@ -1442,7 +1512,7 @@ fn mcp_server_returns_sheets_as_images() {
         serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": "render", "arguments": {"inputs": [s(&pdf)], "pages": "-2"}}}),
         serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-            "params": {"name": "text", "arguments": {"input": s(&dir.path().join("none.pdf"))}}}),
+            "params": {"name": "probe", "arguments": {"inputs": [s(&dir.path().join("none.pdf"))]}}}),
     ];
     let stdin: String = messages.iter().map(|m| format!("{m}\n")).collect();
     let output = gridity().arg("mcp").write_stdin(stdin).output().unwrap();
@@ -1458,7 +1528,7 @@ fn mcp_server_returns_sheets_as_images() {
         .collect();
     assert_eq!(ids, [1, 2, 3, 4]);
     assert_eq!(responses[0]["result"]["protocolVersion"], "2025-11-25");
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 3);
 
     let render = &responses[2]["result"];
     assert_eq!(render["isError"], false);
@@ -1477,11 +1547,11 @@ fn mcp_server_returns_sheets_as_images() {
     assert_eq!(content[1]["mimeType"], "image/png");
     assert!(content[1]["data"].as_str().unwrap().starts_with("iVBOR"));
 
-    let text = &responses[3]["result"];
-    assert_eq!(text["isError"], true);
-    assert!(text.get("structuredContent").is_none());
+    let missing = &responses[3]["result"];
+    assert_eq!(missing["isError"], true);
+    assert!(missing.get("structuredContent").is_none());
     assert!(
-        text["content"][0]["text"]
+        missing["content"][0]["text"]
             .as_str()
             .unwrap()
             .contains("reason: not_found")
@@ -1568,88 +1638,6 @@ fn mcp_server_survives_bad_lines_and_answers_batches() {
     assert_eq!(responses[1]["id"], 1);
     assert_eq!(responses[1]["result"], serde_json::json!({}));
     assert_eq!(responses[2][0]["id"], 2);
-}
-
-/// Sends `{method, params}` messages to `gridity mcp` and returns each `result`.
-fn mcp_calls(calls: &[Value]) -> Vec<Value> {
-    let stdin: String = calls
-        .iter()
-        .enumerate()
-        .map(|(id, call)| {
-            let message = serde_json::json!({"jsonrpc": "2.0", "id": id,
-                "method": call["method"], "params": call["params"]});
-            format!("{message}\n")
-        })
-        .collect();
-    let output = gridity().arg("mcp").write_stdin(stdin).output().unwrap();
-    assert!(output.status.success());
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap()["result"].clone())
-        .collect()
-}
-
-fn mcp_text(arguments: Value) -> Value {
-    serde_json::json!({"method": "tools/call", "params": {"name": "text", "arguments": arguments}})
-}
-
-fn returned_pages(result: &Value) -> Vec<u64> {
-    result["structuredContent"]["pages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["page"].as_u64().unwrap())
-        .collect()
-}
-
-#[test]
-fn mcp_text_returns_the_pages_that_fit_and_names_the_rest() {
-    let dir = TempDir::new().unwrap();
-    let pdf = dir.path().join("doc.pdf");
-    write_pdf_pages(&pdf, &vec![(595, 842, 0, text_page(40)); 6]);
-    let results = mcp_calls(&[
-        serde_json::json!({"method": "tools/list"}),
-        mcp_text(serde_json::json!({"input": s(&pdf), "pages": "2-6", "max_chars": 3000})),
-        mcp_text(serde_json::json!({"input": s(&pdf)})),
-        mcp_text(serde_json::json!({"input": s(&pdf), "pages": "1", "max_chars": 1000})),
-    ]);
-
-    let text_tool = &results[0]["tools"][2];
-    assert_eq!(text_tool["name"], "text");
-    assert_eq!(text_tool["_meta"]["anthropic/maxResultSizeChars"], 500_000);
-
-    let first = &results[1];
-    assert_eq!(first["isError"], false);
-    assert_eq!(returned_pages(first), [2, 3]);
-    let next = first["structuredContent"]["next_pages"].as_str().unwrap();
-    assert_eq!(next, "4-6");
-    let summary = first["content"][0]["text"].as_str().unwrap();
-    let summary = summary.lines().next().unwrap();
-    assert!(
-        summary.contains("2 of 5 selected pages (p.2-3)"),
-        "{summary}"
-    );
-    assert!(summary.contains("pages: \"4-6\""), "{summary}");
-
-    let all = &results[2];
-    assert_eq!(returned_pages(all), [1, 2, 3, 4, 5, 6]);
-    assert!(all["structuredContent"].get("next_pages").is_none());
-
-    let oversized = &results[3];
-    assert_eq!(returned_pages(oversized), [1]);
-    assert!(
-        oversized["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("more than max_chars 1000, and is returned whole")
-    );
-
-    let rest = mcp_calls(&[mcp_text(
-        serde_json::json!({"input": s(&pdf), "pages": next}),
-    )]);
-    assert_eq!(returned_pages(&rest[0]), [4, 5, 6]);
-    assert!(rest[0]["structuredContent"].get("next_pages").is_none());
 }
 
 /// A running `gridity mcp` server that answers one request at a time.
@@ -1755,10 +1743,10 @@ fn make_suggested_calls(probes: &[Value]) -> Vec<(u64, String)> {
 fn mcp_suggested_pdf_calls_succeed_as_they_are() {
     let dir = TempDir::new().unwrap();
     let report = dir.path().join("report.pdf");
-    write_pdf_pages(&report, &vec![(595, 842, 0, text_page(10)); 12]);
+    write_pdf_pages(&report, &vec![(595, 842, 0, text_page_sized(10, 10)); 12]);
     let figures = dir.path().join("figures.pdf");
-    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page(10));
-    let mut pages = vec![(595, 842, 0, text_page(10))];
+    let figure = format!("{}0 0 1 rg 50 50 400 300 re f\n", text_page_sized(10, 10));
+    let mut pages = vec![(595, 842, 0, text_page_sized(10, 10))];
     pages.extend(std::iter::repeat_n((595, 842, 0, figure), 11));
     write_pdf_pages(&figures, &pages);
     let beyond_mcp_default = make_suggested_calls(&[
@@ -1912,6 +1900,11 @@ fn export_names_one_file_per_item() {
     let numbered = dir.path().join("sheet.png");
     let manifest = run_json(&["export", s(&pdf), "--pages", "1-2", "-o", s(&numbered)]);
     assert_eq!(names(&manifest), ["sheet-01.png", "sheet-02.png"]);
+
+    let braced = dir.path().join("a{page}.pdf");
+    std::fs::copy(&pdf, &braced).unwrap();
+    let manifest = run_json(&["export", s(&braced), "--pages", "1-2", "-o", s(&pages_dir)]);
+    assert_eq!(names(&manifest), ["a_page_-p01.png", "a_page_-p02.png"]);
 
     let error = run_error_json(&["export", s(&pdf), "--name", "{stem}", "-o", s(&pages_dir)]);
     assert_eq!(error["reason"], "invalid_value");

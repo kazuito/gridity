@@ -29,11 +29,11 @@ A page beyond the end is an error (exit 2) that states the page count.
   are fractions of the page: `--pages 9 --crop 0,0.5,1,0.5` is the bottom half of page 9
   (see `gridity guide layout`).
 
-## Text first
+## Text pages
 
-`gridity text file.pdf` prints the visible text of each page and marks the pages that have
-figures, tables or formulas; `gridity probe file.pdf --per-page` turns that into suggested
-commands. See `gridity guide text`.
+`gridity probe file.pdf --per-page` marks the pages that have figures, tables or formulas,
+suggests render commands for them, and lists the plain text pages, which a PDF text
+extractor reads for far fewer tokens. See `gridity guide pages`.
 
 ## Encrypted PDFs
 
@@ -48,7 +48,7 @@ Password-protected files fail with exit 3 and a hint. Give the password one of t
 
 Agents: do not write the password into the conversation or a command line. Ask the user
 to put it in a file or to set `GRIDITY_PDF_PASSWORD` for you, then pass `--password-file`
-or nothing. The same options work with `probe` and `text`.
+or nothing. The same options work with `probe` and `export`.
 
 ## Limitations
 

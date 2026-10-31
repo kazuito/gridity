@@ -6,7 +6,7 @@ use std::time::Instant;
 use anyhow::Result;
 use rayon::prelude::*;
 
-use crate::cli::{ExportArgs, InputKind};
+use crate::cli::ExportArgs;
 use crate::detect::detect;
 use crate::error::{CliError, Reason, usage};
 use crate::output::{
@@ -14,12 +14,12 @@ use crate::output::{
     format_from_extension, sanitize_file_name, write_atomic,
 };
 use crate::render::{
-    CountLimit, FrameLimits, ItemRef, check_flags, default_format, fingerprint, input_files,
-    item_ref, kind_name, natural_width, output_stem, round3, select_items, source_info,
-    validate_template,
+    CountLimit, FrameLimits, ItemRef, check_flags, fingerprint, input_files, item_ref,
+    natural_width, output_stem, round3, select_items, source_info,
 };
 use crate::select::{Crop, format_file_time, parse_crop};
 use crate::source::{Item, ItemKey, Source, Warnings, fit_size};
+use crate::template::{expand_template, validate_template};
 
 pub const DEFAULT_DPI: u32 = 150;
 pub const DEFAULT_MAX_FILES: usize = 100;
@@ -30,24 +30,6 @@ const MAX_PIXELS: u64 = 100_000_000;
 /// Pixels decoded and held in memory at once; larger selections are written in batches.
 const BATCH_PIXELS: u64 = 64_000_000;
 const BATCH_ITEMS: usize = 32;
-
-pub fn default_name(kind: InputKind) -> &'static str {
-    match kind {
-        InputKind::Pdf => "{stem}-p{page}",
-        InputKind::Video => "{stem}-{time}",
-        InputKind::Anim => "{stem}-f{frame}",
-        InputKind::Images => "{name}",
-    }
-}
-
-fn name_vars(kind: InputKind) -> &'static [&'static str] {
-    match kind {
-        InputKind::Pdf => &["stem", "index", "total", "page"],
-        InputKind::Video => &["stem", "index", "total", "time"],
-        InputKind::Anim => &["stem", "index", "total", "time", "frame"],
-        InputKind::Images => &["stem", "index", "total", "name"],
-    }
-}
 
 pub fn run(args: ExportArgs) -> Result<()> {
     let (json, dry_run, quiet) = (args.json, args.dry_run, args.quiet);
@@ -103,11 +85,11 @@ pub fn execute(args: ExportArgs) -> Result<ExportManifest> {
         .with_hint("pass a directory to -o, or leave out --name")
         .into());
     }
-    let template = args.name.as_deref().unwrap_or(default_name(kind));
-    validate_template(template, "name", name_vars(kind), kind)?;
+    let template = args.name.as_deref().unwrap_or(kind.default_name());
+    validate_template(template, "name", kind.name_vars(), kind)?;
 
     let source = Source::open(kind, &args.inputs, &args.source)?;
-    log(format!("opened {} input", kind_name(kind)));
+    log(format!("opened {} input", kind.name()));
     let crop = args.selection.crop.as_deref().map(parse_crop).transpose()?;
     let frames = FrameLimits {
         default_count: None,
@@ -124,7 +106,7 @@ pub fn execute(args: ExportArgs) -> Result<ExportManifest> {
     let format = args
         .format
         .or_else(|| args.output.as_deref().and_then(format_from_extension))
-        .unwrap_or_else(|| default_format(kind));
+        .unwrap_or_else(|| kind.default_format());
     let stem = output_stem(&source, &args.inputs);
     let target = Target::resolve_export(
         args.output.as_deref(),
@@ -332,32 +314,31 @@ fn file_names(template: &str, source: &Source, items: &[Item], stem: &str) -> Ve
                     .unwrap_or_default(),
                 _ => String::new(),
             };
-            let expanded = template
-                .replace("{stem}", stem)
-                .replace("{index}", &format!("{:0index_width$}", item.vars.index))
-                .replace("{total}", &items.len().to_string())
-                .replace(
-                    "{page}",
-                    &item_ref
+            let expanded = expand_template(template, |var| match var {
+                "stem" => Some(stem.to_string()),
+                "index" => Some(format!("{:0index_width$}", item.vars.index)),
+                "total" => Some(items.len().to_string()),
+                "page" => Some(
+                    item_ref
                         .page
                         .map(|p| format!("{p:0page_width$}"))
                         .unwrap_or_default(),
-                )
-                .replace(
-                    "{time}",
-                    &item_ref
+                ),
+                "time" => Some(
+                    item_ref
                         .time
                         .map(|t| format_file_time(t, long, fine))
                         .unwrap_or_default(),
-                )
-                .replace(
-                    "{frame}",
-                    &item_ref
+                ),
+                "frame" => Some(
+                    item_ref
                         .frame
                         .map(|f| format!("{f:0frame_width$}"))
                         .unwrap_or_default(),
-                )
-                .replace("{name}", &name);
+                ),
+                "name" => Some(name.clone()),
+                _ => None,
+            });
             sanitize_file_name(&expanded)
         })
         .collect()
@@ -437,17 +418,5 @@ mod tests {
         assert!(check_unique(&names(&["a-p1", "a-p2"]), "{stem}").is_ok());
         let error = check_unique(&names(&["shot", "x", "Shot"]), "{name}").unwrap_err();
         assert!(error.message.contains("items 1 and 3"), "{}", error.message);
-    }
-
-    #[test]
-    fn default_names_only_use_their_kind_variables() {
-        for kind in [
-            InputKind::Pdf,
-            InputKind::Video,
-            InputKind::Anim,
-            InputKind::Images,
-        ] {
-            assert!(validate_template(default_name(kind), "name", name_vars(kind), kind).is_ok());
-        }
     }
 }
